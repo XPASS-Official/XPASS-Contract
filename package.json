@@ -1,0 +1,35 @@
+{
+  "name": "xpass-kip7",
+  "version": "1.0.0",
+  "description": "KIP-7 standard compliant token implementation",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:coverage": "hardhat coverage",
+    "deploy": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:testnet": "hardhat run scripts/deploy.js --network testnet",
+    "deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
+    "node": "hardhat node",
+    "clean": "hardhat clean",
+    "flatten": "npx hardhat flatten contracts/XPassToken.sol > flattened/XPassTokenAll.sol"
+  },
+  "keywords": [
+    "kip7",
+    "kaia",
+    "blockchain",
+    "token",
+    "hardhat"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@openzeppelin/contracts": "^5.0.0",
+    "hardhat": "^2.19.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts-upgradeable": "^5.0.0",
+    "dotenv": "^17.2.1"
+  }
+}
