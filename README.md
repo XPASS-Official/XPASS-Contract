@@ -140,9 +140,10 @@ Variable parameters such as transaction fees or reward ratios are managed throug
 - Governance rights are limited to **DAO voting on cultural and content-related matters** (e.g., stage design, costumes, cast selection).  
 
 ### Utility
-- Purchase of **1P1S NFT tickets**  
-- Settlement for **NFT secondary trading**  
-- Participation in **Ticket Stack** (staking and related rewards)  
+- **Ticket NFT Reservation**  
+- **Ticket NFT & Goods NFT Trading**  
+- **Physical Goods Purchase**  
+- **Ticket Stack Participation** 
 
 ## 🔧 Contract Structure
 
