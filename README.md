@@ -116,8 +116,9 @@ npm run deploy:mainnet
 - **Testnet**: TBD (Deploy when ready)
 - **Mainnet**: TBD (Deploy when ready)
 
-## 📦 Token Allocation & Custody
+## 📦 Token Allocation
 ![X-PASS](./img/ALLOCATION.jpg)
+
 A total of **1,000,000,000 XPASS** tokens are minted at deployment under a **single, non-upgradeable contract** and secured as follows:
 
 - **Multi-Signature Safe Wallet**: Operated with external professional co-signers, requiring multiple approvals before any transaction can be executed.  
