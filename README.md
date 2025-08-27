@@ -116,6 +116,33 @@ npm run deploy:mainnet
 - **Testnet**: TBD (Deploy when ready)
 - **Mainnet**: TBD (Deploy when ready)
 
+## 📦 Token Allocation & Custody
+
+A total of **1,000,000,000 XPASS** tokens are minted at deployment under a **single, non-upgradeable contract** and secured as follows:
+
+- **Multi-Signature Safe Wallet**: Operated with external professional co-signers, requiring multiple approvals before any transaction can be executed.  
+- **External Custody Provider**: Managed under institutional-grade custody and fully compliant with security standards.  
+
+By adopting a single-deployment structure, the contract itself remains immutable.  
+Variable parameters such as transaction fees or reward ratios are managed through **external contracts**.
+
+---
+
+## 📑 Token Policy
+
+### Distribution Policy
+- Allocation ratios (team, marketing, community, etc.) are transparently disclosed.  
+- Vesting wallets are **purpose-labeled on KaiaScan** (e.g., “Team”, “Marketing”, “Community”), and wallet addresses are publicly published.  
+
+### Governance
+- The token does not grant governance rights over project operations.  
+- Governance rights are limited to **DAO voting on cultural and content-related matters** (e.g., stage design, costumes, cast selection).  
+
+### Utility
+- Purchase of **1P1S NFT tickets**  
+- Settlement for **NFT secondary trading**  
+- Participation in **Ticket Stack** (staking and related rewards)  
+
 ## 🔧 Contract Structure
 
 ### **Inheritance Structure**
