@@ -142,7 +142,7 @@ Variable parameters such as transaction fees or reward ratios are managed throug
 ### Utility
 - **Ticket NFT Reservation**  
 - **Ticket NFT & Goods NFT Trading**  
-- **Physical Goods Purchase**  
+- **Concert MD Purchase**  
 - **Ticket Stack Participation** 
 
 ## 🔧 Contract Structure
