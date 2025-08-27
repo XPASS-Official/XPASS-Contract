@@ -1,4 +1,4 @@
-# XPassToken - KIP-7 Based ERC20 Token
+# XPASS Token - KIP-7 Based ERC20 Token
 
 A KIP-7 standard compliant ERC20 token contract running on the Kaia network.
 
