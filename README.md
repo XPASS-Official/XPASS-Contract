@@ -121,8 +121,8 @@ npm run deploy:mainnet
 
 A total of **1,000,000,000 XPASS** tokens are minted at deployment under a **single, non-upgradeable contract** and secured as follows:
 
-- **Multi-Signature Safe Wallet**: Operated with external professional co-signers, requiring multiple approvals before any transaction can be executed.  
-- **External Custody Provider**: Managed under institutional-grade custody and fully compliant with security standards.  
+- **[Multi-Signature Safe Wallet](https://safe.kaia.io/)**: Operated with external professional co-signers, requiring multiple approvals before any transaction can be executed.  
+- **[External Custody Provider](https://custody.upbit.com/introduction)**: Managed under institutional-grade custody and fully compliant with security standards.  
 
 By adopting a single-deployment structure, the contract itself remains immutable.  
 Variable parameters such as transaction fees or reward ratios are managed through **external contracts**.
