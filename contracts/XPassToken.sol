@@ -20,7 +20,9 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 contract XPassToken is ERC20, ERC20Pausable, Ownable, ERC20Permit {
 
     // Token decimal places
-    uint8 private constant DECIMALS = 18;
+    // NOTE: This constant is currently unused - OpenZeppelin's ERC20 contract uses default value of 18
+    // If you need to override the default decimals, implement the decimals() function to return this value
+    // uint8 private constant DECIMALS = 18;
     
     // Maximum supply (1,000,000,000 tokens)
     uint256 private constant MAX_SUPPLY = 1_000_000_000 * 10**18;
@@ -67,10 +69,17 @@ contract XPassToken is ERC20, ERC20Pausable, Ownable, ERC20Permit {
         internal
         override(ERC20, ERC20Pausable)
     {
-        // Token transfer is not allowed when paused
-        if (paused()) {
-            revert("ERC20Pausable: token transfer while paused");
-        }
+        // NOTE: Removed redundant pause check - ERC20Pausable already handles this via whenNotPaused modifier
+        // The original implementation had duplicate pause checking:
+        // 1. Manual check: if (paused()) { revert("ERC20Pausable: token transfer while paused"); }
+        // 2. ERC20Pausable's whenNotPaused modifier automatically checks pause status
+        // This caused redundant gas consumption and unnecessary code complexity
+        
+        // Original redundant code (commented out):
+        // if (paused()) {
+        //     revert("ERC20Pausable: token transfer while paused");
+        // }
+        
         super._update(from, to, amount);
     }
     
