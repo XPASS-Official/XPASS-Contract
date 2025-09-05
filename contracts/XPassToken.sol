@@ -30,9 +30,10 @@ contract XPassToken is ERC20, ERC20Pausable, Ownable, ERC20Permit {
     // Custom events
     event TokensPaused();
     event TokensUnpaused();
+    event TimelockControllerChanged(address indexed oldTimelockController, address indexed newTimelockController);
     
     // State variable to hold the address of the TimelockController contract
-    address public immutable timelockController;
+    address public timelockController;
     
     /**
      * @dev Modifier to restrict function calls to only the TimelockController address.
@@ -62,8 +63,10 @@ contract XPassToken is ERC20, ERC20Pausable, Ownable, ERC20Permit {
     /**
      * @dev Pause token transfer function (TimelockController only)
      * When using Kaia Safe, this requires a proposal and a time-locked execution.
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
      */
     function pause() public onlyTimelock {
+        require(timelockController != address(0), "XPassToken: TimelockController has been removed");
         _pause();
         emit TokensPaused();
     }
@@ -71,8 +74,10 @@ contract XPassToken is ERC20, ERC20Pausable, Ownable, ERC20Permit {
     /**
      * @dev Resume token transfer function (TimelockController only)
      * When using Kaia Safe, this requires a proposal and a time-locked execution.
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
      */
     function unpause() public onlyTimelock {
+        require(timelockController != address(0), "XPassToken: TimelockController has been removed");
         _unpause();
         emit TokensUnpaused();
     }
@@ -110,5 +115,58 @@ contract XPassToken is ERC20, ERC20Pausable, Ownable, ERC20Permit {
      */
     function maxSupply() public pure returns (uint256) {
         return MAX_SUPPLY;
+    }
+    
+    /**
+     * @dev Changes the TimelockController address
+     * @param newTimelockController New TimelockController address
+     * @notice Only the owner can call this function
+     * @notice This allows upgrading the TimelockController if needed
+     */
+    function changeTimelockController(address newTimelockController) external onlyOwner {
+        require(newTimelockController != address(0), "XPassToken: new timelock controller cannot be zero address");
+        require(newTimelockController != timelockController, "XPassToken: new timelock controller cannot be current timelock controller");
+        
+        address oldTimelockController = timelockController;
+        timelockController = newTimelockController;
+        
+        emit TimelockControllerChanged(oldTimelockController, newTimelockController);
+    }
+    
+    /**
+     * @dev Internal function to remove the TimelockController (sets to zero address)
+     * @notice This is only called internally during renounceOwnership when not paused
+     */
+    function _removeTimelockController() internal {
+        address oldTimelockController = timelockController;
+        timelockController = address(0);
+        
+        emit TimelockControllerChanged(oldTimelockController, address(0));
+    }
+    
+    /**
+     * @dev Get the current TimelockController address
+     * @return Current TimelockController address
+     */
+    function getTimelockController() external view returns (address) {
+        return timelockController;
+    }
+    
+    /**
+     * @dev Override renounceOwnership to prevent renouncement when paused
+     * @notice This prevents ownership renouncement when token is paused to avoid permanent pause
+     * @notice If not paused, TimelockController is automatically removed before renouncement
+     */
+    function renounceOwnership() public override onlyOwner {
+        // Prevent renouncement when token is paused
+        require(!paused(), "XPassToken: cannot renounce ownership while paused");
+        
+        // Remove TimelockController before renouncing ownership (only when not paused)
+        if (timelockController != address(0)) {
+            _removeTimelockController();
+        }
+        
+        // Call parent renounceOwnership
+        super.renounceOwnership();
     }
 }

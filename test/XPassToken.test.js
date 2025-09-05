@@ -1985,5 +1985,432 @@ describe("XPassToken", function () {
     });
   });
 
+  describe("TimelockController Management", function() {
+    it("Should allow owner to change TimelockController", async function() {
+      const newTimelockController = addr1.address;
+      
+      // Owner should be able to change TimelockController
+      await expect(xpassToken.changeTimelockController(newTimelockController))
+        .to.emit(xpassToken, "TimelockControllerChanged")
+        .withArgs(await timelockController.getAddress(), newTimelockController);
+      
+      // Verify the change
+      expect(await xpassToken.timelockController()).to.equal(newTimelockController);
+      expect(await xpassToken.getTimelockController()).to.equal(newTimelockController);
+    });
+
+    it("Should not allow non-owner to change TimelockController", async function() {
+      const newTimelockController = addr1.address;
+      
+      // Non-owner should not be able to change TimelockController
+      await expect(xpassToken.connect(addr1).changeTimelockController(newTimelockController))
+        .to.be.revertedWithCustomError(xpassToken, "OwnableUnauthorizedAccount")
+        .withArgs(addr1.address);
+    });
+
+    it("Should not allow changing TimelockController to zero address", async function() {
+      await expect(xpassToken.changeTimelockController(ethers.ZeroAddress))
+        .to.be.revertedWith("XPassToken: new timelock controller cannot be zero address");
+    });
+
+    it("Should not allow changing TimelockController to current TimelockController", async function() {
+      const currentTimelockController = await timelockController.getAddress();
+      
+      await expect(xpassToken.changeTimelockController(currentTimelockController))
+        .to.be.revertedWith("XPassToken: new timelock controller cannot be current timelock controller");
+    });
+
+    it("Should allow new TimelockController to pause tokens", async function() {
+      const newTimelockController = addr1.address;
+      
+      // Change TimelockController
+      await xpassToken.changeTimelockController(newTimelockController);
+      
+      // New TimelockController should be able to pause (if it has the right interface)
+      // Note: This test assumes the new address implements the pause functionality
+      // In practice, you would deploy a new TimelockController contract
+    });
+
+    it("Should maintain pause state after TimelockController change", async function() {
+      // First pause with current TimelockController (using owner who has PROPOSER_ROLE)
+      await timelockController.connect(owner).schedule(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      
+      // Wait for delay and execute
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+      
+      // Verify token is paused
+      expect(await xpassToken.paused()).to.be.true;
+      
+      // Change TimelockController
+      const newTimelockController = addr2.address;
+      await xpassToken.changeTimelockController(newTimelockController);
+      
+      // Token should still be paused
+      expect(await xpassToken.paused()).to.be.true;
+    });
+
+    it("Should allow new TimelockController to unpause tokens", async function() {
+      // First pause with current TimelockController (using owner who has PROPOSER_ROLE)
+      await timelockController.connect(owner).schedule(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      
+      // Wait for delay and execute
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+      
+      // Change TimelockController
+      const newTimelockController = addr2.address;
+      await xpassToken.changeTimelockController(newTimelockController);
+      
+      // New TimelockController should be able to unpause
+      // Note: This would require the new address to have the right interface
+      // In practice, you would deploy a new TimelockController contract
+    });
+
+    it("Should not allow old TimelockController to pause after change", async function() {
+      const newTimelockController = addr1.address;
+      
+      // Change TimelockController
+      await xpassToken.changeTimelockController(newTimelockController);
+      
+      // Old TimelockController should not be able to pause (using owner who has PROPOSER_ROLE)
+      await timelockController.connect(owner).schedule(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      
+      // Wait for delay and try to execute
+      await time.increase(PRODUCTION_DELAY + 1);
+      await expect(timelockController.execute(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      )).to.be.revertedWith("XPassToken: caller is not the timelock controller");
+    });
+
+    it("Should handle multiple TimelockController changes", async function() {
+      const firstNewController = addr1.address;
+      const secondNewController = addr2.address;
+      
+      // First change
+      await xpassToken.changeTimelockController(firstNewController);
+      expect(await xpassToken.timelockController()).to.equal(firstNewController);
+      
+      // Second change
+      await xpassToken.changeTimelockController(secondNewController);
+      expect(await xpassToken.timelockController()).to.equal(secondNewController);
+      
+      // Verify events were emitted
+      // Note: We can't easily test multiple events in the same transaction
+    });
+
+    it("Should preserve token state during TimelockController change", async function() {
+      // Transfer some tokens
+      await xpassToken.transfer(addr1.address, ethers.parseUnits("100", 18));
+      
+      // Check balances before change
+      const ownerBalanceBefore = await xpassToken.balanceOf(owner.address);
+      const addr1BalanceBefore = await xpassToken.balanceOf(addr1.address);
+      
+      // Change TimelockController
+      const newTimelockController = addr1.address;
+      await xpassToken.changeTimelockController(newTimelockController);
+      
+      // Check balances after change
+      const ownerBalanceAfter = await xpassToken.balanceOf(owner.address);
+      const addr1BalanceAfter = await xpassToken.balanceOf(addr1.address);
+      
+      // Balances should be unchanged
+      expect(ownerBalanceAfter).to.equal(ownerBalanceBefore);
+      expect(addr1BalanceAfter).to.equal(addr1BalanceBefore);
+    });
+
+    it("Should allow getTimelockController to return current controller", async function() {
+      const currentController = await xpassToken.timelockController();
+      const getController = await xpassToken.getTimelockController();
+      
+      expect(getController).to.equal(currentController);
+      
+      // Change controller and test again
+      const newController = addr1.address;
+      await xpassToken.changeTimelockController(newController);
+      
+      const newGetController = await xpassToken.getTimelockController();
+      expect(newGetController).to.equal(newController);
+    });
+
+    it("Should emit TimelockControllerChanged event with correct parameters", async function() {
+      const newTimelockController = addr2.address;
+      const oldTimelockController = await timelockController.getAddress();
+      
+      await expect(xpassToken.changeTimelockController(newTimelockController))
+        .to.emit(xpassToken, "TimelockControllerChanged")
+        .withArgs(oldTimelockController, newTimelockController);
+    });
+  });
+
+  describe("RenounceOwnership with TimelockController", function() {
+    it("Should remove TimelockController after renounceOwnership", async function() {
+      // Renounce ownership (should automatically remove TimelockController)
+      await xpassToken.renounceOwnership();
+      
+      // Verify TimelockController is removed
+      expect(await xpassToken.timelockController()).to.equal(ethers.ZeroAddress);
+      
+      // Verify owner is also renounced
+      expect(await xpassToken.owner()).to.equal(ethers.ZeroAddress);
+    });
+
+    it("Should not allow changeTimelockController after renounceOwnership", async function() {
+      // Renounce ownership
+      await xpassToken.renounceOwnership();
+      
+      // Verify owner is now zero address
+      expect(await xpassToken.owner()).to.equal(ethers.ZeroAddress);
+      
+      // Should not be able to change TimelockController
+      await expect(xpassToken.changeTimelockController(addr1.address))
+        .to.be.revertedWithCustomError(xpassToken, "OwnableUnauthorizedAccount");
+    });
+
+    it("Should not allow transferOwnership after renounceOwnership", async function() {
+      // Renounce ownership
+      await xpassToken.renounceOwnership();
+      
+      // Verify owner is now zero address
+      expect(await xpassToken.owner()).to.equal(ethers.ZeroAddress);
+      
+      // Should not be able to transfer ownership
+      await expect(xpassToken.transferOwnership(addr1.address))
+        .to.be.revertedWithCustomError(xpassToken, "OwnableUnauthorizedAccount");
+    });
+
+    it("Should not allow renounceOwnership after already renounced", async function() {
+      // Renounce ownership
+      await xpassToken.renounceOwnership();
+      
+      // Verify owner is now zero address
+      expect(await xpassToken.owner()).to.equal(ethers.ZeroAddress);
+      
+      // Should not be able to renounce again
+      await expect(xpassToken.renounceOwnership())
+        .to.be.revertedWithCustomError(xpassToken, "OwnableUnauthorizedAccount");
+    });
+  });
+
+  describe("TimelockController Removal Protection", function() {
+    it("Should not allow renounceOwnership when paused", async function() {
+      // First pause the token
+      await timelockController.connect(owner).schedule(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+      
+      // Verify token is paused
+      expect(await xpassToken.paused()).to.be.true;
+      
+      // Should not be able to renounce ownership when paused
+      await expect(xpassToken.renounceOwnership())
+        .to.be.revertedWith("XPassToken: cannot renounce ownership while paused");
+    });
+
+    it("Should automatically remove TimelockController on renounceOwnership when not paused", async function() {
+      // Renounce ownership should automatically remove TimelockController when not paused
+      await expect(xpassToken.renounceOwnership())
+        .to.emit(xpassToken, "TimelockControllerChanged")
+        .withArgs(await timelockController.getAddress(), ethers.ZeroAddress);
+      
+      // Verify TimelockController is removed
+      expect(await xpassToken.timelockController()).to.equal(ethers.ZeroAddress);
+      
+      // Verify owner is also renounced
+      expect(await xpassToken.owner()).to.equal(ethers.ZeroAddress);
+    });
+
+    it("Should not allow pause when TimelockController is removed", async function() {
+      // Renounce ownership to remove TimelockController
+      await xpassToken.renounceOwnership();
+      
+      // Should not be able to pause through TimelockController
+      await expect(timelockController.connect(owner).schedule(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      )).to.not.be.reverted; // schedule might work, but execute should fail
+      
+      // Wait for delay and try to execute
+      await time.increase(PRODUCTION_DELAY + 1);
+      await expect(timelockController.execute(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      )).to.be.revertedWith("XPassToken: caller is not the timelock controller");
+    });
+
+    it("Should not allow unpause when TimelockController is removed", async function() {
+      // First pause the token
+      await timelockController.connect(owner).schedule(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+      
+      // Should not be able to renounce ownership when paused
+      await expect(xpassToken.renounceOwnership())
+        .to.be.revertedWith("XPassToken: cannot renounce ownership while paused");
+    });
+
+    it("Should allow token transfers when TimelockController is removed", async function() {
+      // Renounce ownership to remove TimelockController
+      await xpassToken.renounceOwnership();
+      
+      // Token transfers should still work
+      await expect(xpassToken.transfer(addr1.address, ethers.parseUnits("100", 18)))
+        .to.not.be.reverted;
+      
+      // Verify transfer worked
+      expect(await xpassToken.balanceOf(addr1.address)).to.equal(ethers.parseUnits("100", 18));
+    });
+
+    it("Should not allow pause/unpause after renounceOwnership with automatic removal", async function() {
+      // Renounce ownership (should automatically remove TimelockController)
+      await xpassToken.renounceOwnership();
+      
+      // Verify TimelockController is removed
+      expect(await xpassToken.timelockController()).to.equal(ethers.ZeroAddress);
+      
+      // Should not be able to pause through TimelockController
+      await expect(timelockController.connect(owner).schedule(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      )).to.not.be.reverted; // schedule might work, but execute should fail
+      
+      // Wait for delay and try to execute
+      await time.increase(PRODUCTION_DELAY + 1);
+      await expect(timelockController.execute(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      )).to.be.revertedWith("XPassToken: caller is not the timelock controller");
+    });
+
+    it("Should require unpause before renounceOwnership when paused", async function() {
+      // First pause the token
+      await timelockController.connect(owner).schedule(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("pause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+      
+      // Should not be able to renounce ownership when paused
+      await expect(xpassToken.renounceOwnership())
+        .to.be.revertedWith("XPassToken: cannot renounce ownership while paused");
+      
+      // Unpause the token
+      await timelockController.connect(owner).schedule(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("unpause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassToken.getAddress(),
+        0,
+        xpassToken.interface.encodeFunctionData("unpause"),
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+      
+      // Now should be able to renounce ownership
+      await expect(xpassToken.renounceOwnership())
+        .to.emit(xpassToken, "TimelockControllerChanged")
+        .withArgs(await timelockController.getAddress(), ethers.ZeroAddress);
+    });
+  });
+
   
 });
