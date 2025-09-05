@@ -186,7 +186,7 @@ describe("XPassToken", function () {
       
       const transferAmount = ethers.parseUnits("1000", 18);
       await expect(xpassToken.transfer(addr1.address, transferAmount))
-        .to.be.revertedWith("ERC20Pausable: token transfer while paused");
+        .to.be.revertedWithCustomError(xpassToken, "EnforcedPause");
     });
 
     it("Token transfer should be possible after unpause", async function () {
@@ -353,7 +353,7 @@ describe("XPassToken", function () {
       // Token transfer should be blocked
       const transferAmount = ethers.parseUnits("1000", 18);
       await expect(xpassToken.transfer(addr1.address, transferAmount))
-        .to.be.revertedWith("ERC20Pausable: token transfer while paused");
+        .to.be.revertedWithCustomError(xpassToken, "EnforcedPause");
       
       // Ownership transfer should be possible (unrelated to token transfer)
       await expect(xpassToken.transferOwnership(addr1.address))
@@ -541,14 +541,14 @@ describe("XPassToken", function () {
         // Transfer should fail
         const transferAmount = ethers.parseUnits("1000", 18);
         await expect(xpassToken.transfer(addr1.address, transferAmount))
-          .to.be.revertedWith("ERC20Pausable: token transfer while paused");
+          .to.be.revertedWithCustomError(xpassToken, "EnforcedPause");
         
         // transferFrom should fail
         const approveAmount = ethers.parseUnits("1000", 18);
         await xpassToken.approve(addr1.address, approveAmount);
         await expect(
           xpassToken.connect(addr1).transferFrom(owner.address, addr2.address, approveAmount)
-        ).to.be.revertedWith("ERC20Pausable: token transfer while paused");
+        ).to.be.revertedWithCustomError(xpassToken, "EnforcedPause");
       });
     });
 
@@ -1153,7 +1153,7 @@ describe("XPassToken", function () {
       
       // Try to transfer - should revert with custom message
       await expect(xpassToken.transfer(addr1.address, ethers.parseUnits("100", 18)))
-        .to.be.revertedWith("ERC20Pausable: token transfer while paused");
+        .to.be.revertedWithCustomError(xpassToken, "EnforcedPause");
     });
 
     it("Should cover _update function when not paused", async function () {
