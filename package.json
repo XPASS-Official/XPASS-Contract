@@ -10,6 +10,9 @@
     "deploy": "hardhat run scripts/deploy.js --network localhost",
     "deploy:testnet": "hardhat run scripts/deploy.js --network testnet",
     "deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
+    "deploy-verify": "hardhat run scripts/deploy-verify.js --network testnet",
+    "deploy-verify:testnet": "hardhat run scripts/deploy-verify.js --network testnet",
+    "deploy-verify:mainnet": "hardhat run scripts/deploy-verify.js --network mainnet",
     "node": "hardhat node",
     "clean": "hardhat clean",
     "flatten": "npx hardhat flatten contracts/XPassToken.sol > flattened/XPassTokenAll.sol"

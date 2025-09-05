@@ -61,6 +61,9 @@ module.exports = {
       }
     ]
   },
+  sourcify: {
+    enabled: false
+  },
   paths: {
     sources: "./contracts",
     tests: "./test",

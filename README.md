@@ -100,12 +100,20 @@ npm run deploy:localhost
 
 ### **Kaia Testnet**
 ```bash
+# Deploy only
 npm run deploy:testnet
+
+# Deploy and verify automatically
+npm run deploy-verify:testnet
 ```
 
 ### **Kaia Mainnet**
 ```bash
+# Deploy only
 npm run deploy:mainnet
+
+# Deploy and verify automatically
+npm run deploy-verify:mainnet
 ```
 
 ### **Environment Variables Required**
