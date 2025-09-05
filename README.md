@@ -84,6 +84,11 @@ npx hardhat coverage
 
 ## 🚀 Deployment
 
+### **Deployment Process**
+1. **Deploy TimelockController**: Set Multi-Sig address as admin
+2. **Deploy XPassToken**: Set Multi-Sig as owner, TimelockController as timelock controller
+3. **Security Verification**: Remove deployer permissions, verify Multi-Sig permissions
+
 ### **Local Testnet**
 ```bash
 # Start Hardhat node (new terminal)
@@ -101,6 +106,15 @@ npm run deploy:testnet
 ### **Kaia Mainnet**
 ```bash
 npm run deploy:mainnet
+```
+
+### **Environment Variables Required**
+```bash
+# Required for deployment
+MULTISIG_ADDRESS=0xYourMultiSigAddress
+
+# Optional (testnet only)
+TIMELOCK_DELAY=60  # seconds (ignored on mainnet)
 ```
 
 ## 📊 Contract Information
@@ -153,27 +167,33 @@ XPassToken
 ├── ERC20 (Basic token functions)
 ├── ERC20Pausable (Pause functionality)
 ├── Ownable (Owner management)
-└── ERC20Permit (Signature-based permissions)
+├── ERC20Permit (Signature-based permissions)
+└── onlyTimelock modifier (TimelockController restriction)
+
+XPassTimelockController
+├── TimelockController (OpenZeppelin)
+└── Custom functions (proposePause, proposeUnpause, etc.)
 ```
 
 ### **Key Functions**
 
 #### **Constructor**
 ```solidity
-constructor(address initialOwner)
+constructor(address initialOwner, address _timelockController)
 ```
-- Set initial owner
+- Set initial owner (Multi-Sig address)
+- Set timelock controller address
 - Mint initial supply
 
 
 
 #### **Pause Management**
 ```solidity
-function pause() public onlyOwner
-function unpause() public onlyOwner
+function pause() public onlyTimelock
+function unpause() public onlyTimelock
 ```
-- Pause/resume token transfers
-- Emergency response
+- Pause/resume token transfers (only callable through TimelockController)
+- Emergency response (48-hour delay applied)
 
 #### **Internal Functions**
 ```solidity
@@ -212,15 +232,12 @@ networks: {
 ```
 xpass-kip7/
 ├── contracts/
-│   └── XPassToken.sol          # Main token contract
+│   ├── XPassToken.sol          # Main token contract
+│   └── TimelockController.sol  # Governance contract
 ├── scripts/
 │   └── deploy.js               # Deployment script
 ├── test/
 │   └── XPassToken.test.js      # Test file
-├── keygen/                     # Key generation tools
-│   ├── generate-keys.js        # Key pair generation
-│   ├── test-keys.js           # Key generation test
-│   └── README.md              # Key generation tool description
 ├── hardhat.config.js           # Hardhat configuration
 ├── package.json                # Project dependencies
 └── README.md                   # This file
@@ -229,10 +246,16 @@ xpass-kip7/
 ## 🛡️ Security Features
 
 ### **Access Control**
-- **Owner-only Functions**: `pause()`, `unpause()`
-- **Pause Functionality**: Block token transfers in emergencies
+- **TimelockController Functions**: `pause()`, `unpause()` (48-hour delay)
+- **Owner Functions**: `transfer()`, `approve()`, `transferOwnership()`, `renounceOwnership()` (immediate)
+- **Pause Functionality**: Block token transfers in emergencies (TimelockController required)
 - **OpenZeppelin Verified**: Industry standard security library
 
+### **Governance Security**
+- **Multi-Sig Integration**: All governance functions require Multi-Sig approval
+- **Timelock Protection**: Critical functions (pause/unpause) have 48-hour delay
+- **Role-based Access**: PROPOSER_ROLE, EXECUTOR_ROLE, ADMIN_ROLE separation
+- **Deployer Isolation**: Deployer has no governance roles after deployment
 
 ### **Gas Optimization**
 - **Compiler Optimization**: 200 runs to minimize gas costs
@@ -258,9 +281,13 @@ function transferFrom(address from, address to, uint256 amount) public returns (
 
 ### **Extension Functions**
 ```solidity
-// Pause functions
-function pause() public onlyOwner
-function unpause() public onlyOwner
+// Pause functions (TimelockController required)
+function pause() public onlyTimelock
+function unpause() public onlyTimelock
+
+// Owner functions (immediate execution)
+function transferOwnership(address newOwner) public onlyOwner
+function renounceOwnership() public onlyOwner
 
 // Signature-based permissions
 function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) public
@@ -268,6 +295,7 @@ function permit(address owner, address spender, uint256 value, uint256 deadline,
 // Utility functions
 function version() public pure returns (string memory)
 function maxSupply() public pure returns (uint256)
+function timelockController() public view returns (address)
 ```
 
 ## 🐛 Troubleshooting

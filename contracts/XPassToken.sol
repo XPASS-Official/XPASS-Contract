@@ -31,33 +31,48 @@ contract XPassToken is ERC20, ERC20Pausable, Ownable, ERC20Permit {
     event TokensPaused();
     event TokensUnpaused();
     
+    // State variable to hold the address of the TimelockController contract
+    address public immutable timelockController;
+    
+    /**
+     * @dev Modifier to restrict function calls to only the TimelockController address.
+     */
+    modifier onlyTimelock() {
+        require(msg.sender == timelockController, "XPassToken: caller is not the timelock controller");
+        _;
+    }
+    
     /**
      * @dev Contract constructor
      * @param initialOwner Initial token owner address (can be Safe multi-sig address)
+     * @param _timelockController The address of the deployed XPassTimelockController.
      */
-    constructor(address initialOwner)
+    constructor(address initialOwner, address _timelockController)
         ERC20("XPASS Token", "XPASS")
         Ownable(initialOwner)
         ERC20Permit("XPASS Token")
     {
+        require(_timelockController != address(0), "Timelock address must be valid");
+        timelockController = _timelockController;
+
         // Mint maximum supply to owner when contract is deployed
         _mint(initialOwner, MAX_SUPPLY);
     }
     
     /**
-     * @dev Pause token transfer function (Owner only)
-     * When using Kaia Safe, this requires multi-sig approval
+     * @dev Pause token transfer function (TimelockController only)
+     * When using Kaia Safe, this requires a proposal and a time-locked execution.
      */
-    function pause() public onlyOwner {
+    function pause() public onlyTimelock {
         _pause();
         emit TokensPaused();
     }
     
     /**
-     * @dev Resume token transfer function (Owner only)
-     * When using Kaia Safe, this requires multi-sig approval
+     * @dev Resume token transfer function (TimelockController only)
+     * When using Kaia Safe, this requires a proposal and a time-locked execution.
      */
-    function unpause() public onlyOwner {
+    function unpause() public onlyTimelock {
         _unpause();
         emit TokensUnpaused();
     }
