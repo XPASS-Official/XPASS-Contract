@@ -2412,5 +2412,139 @@ describe("XPassToken", function () {
     });
   });
 
-  
+  describe("XPassTimelockController (propose* with getMinDelay)", function () {
+    let deployer, admin, other, timelock, xpass;
+
+    const SELECTOR_PAUSE = "0x8456cb59";
+    const SELECTOR_UNPAUSE = "0x3f4ba83a";
+    const SELECTOR_TRANSFER_OWNERSHIP = "0xf2fde38b";
+
+    function findCallScheduled(receipt, iface, timelockAddress) {
+      for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== timelockAddress.toLowerCase()) continue;
+        try {
+          const parsed = iface.parseLog(log);
+          if (parsed && parsed.name === "CallScheduled") return parsed;
+        } catch (_) {}
+      }
+      return undefined;
+    }
+
+    beforeEach(async function () {
+      [deployer, admin, other] = await ethers.getSigners();
+
+      // (1) Timelock 배포: minDelay > 0 (예: 7초)
+      const minDelay = 7;
+      const Timelock = await ethers.getContractFactory("XPassTimelockController", admin);
+      timelock = await Timelock.deploy(minDelay, admin.address);
+      await timelock.waitForDeployment();
+
+      // (2) XPassToken 배포 (owner=admin, timelockController=timelock)
+      const XPassToken = await ethers.getContractFactory("XPassToken", admin);
+      xpass = await XPassToken.deploy(admin.address, await timelock.getAddress());
+      await xpass.waitForDeployment();
+
+      // (3) PROPOSER_ROLE을 EOA(admin)와 Timelock 컨트랙트 주소 모두에 부여
+      const PROPOSER_ROLE = await timelock.PROPOSER_ROLE();
+      const tlAddr = await timelock.getAddress();
+
+      await timelock.connect(admin).grantRole(PROPOSER_ROLE, admin.address);
+      await timelock.connect(admin).grantRole(PROPOSER_ROLE, tlAddr);
+
+      expect(await timelock.hasRole(PROPOSER_ROLE, admin.address)).to.equal(true);
+      expect(await timelock.hasRole(PROPOSER_ROLE, tlAddr)).to.equal(true);
+    });
+
+    it("proposePause: CallScheduled.delay == getMinDelay, selector == pause()", async function () {
+      const minDelayRead = await timelock.getMinDelay();
+      const tlAddr = await timelock.getAddress();
+      const tokenAddr = await xpass.getAddress();
+
+      const tx = await timelock.connect(admin).proposePause(tokenAddr);
+      const rc = await tx.wait();
+
+      const parsed = findCallScheduled(rc, timelock.interface, tlAddr);
+      expect(parsed, "CallScheduled not found").to.not.be.undefined;
+
+      const { id, target, value, data, predecessor, delay } = parsed.args;
+      expect(target).to.equal(tokenAddr);
+      expect(value).to.equal(0n);
+      expect(predecessor).to.equal(ethers.ZeroHash);
+      expect(data.slice(0, 10)).to.equal(SELECTOR_PAUSE);
+      expect(delay).to.equal(minDelayRead);
+
+      // 동일 호출 2회 → 서로 다른 id (salt 자동 증가)
+      const rc2 = await (await timelock.connect(admin).proposePause(tokenAddr)).wait();
+      const p2 = findCallScheduled(rc2, timelock.interface, tlAddr);
+      expect(p2, "second CallScheduled not found").to.not.be.undefined;
+      expect(p2.args.id).to.not.equal(id);
+    });
+
+    it("proposeUnpause: CallScheduled.delay == getMinDelay, selector == unpause()", async function () {
+      const minDelayRead = await timelock.getMinDelay();
+      const tlAddr = await timelock.getAddress();
+      const tokenAddr = await xpass.getAddress();
+
+      const tx = await timelock.connect(admin).proposeUnpause(tokenAddr);
+      const rc = await tx.wait();
+
+      const parsed = findCallScheduled(rc, timelock.interface, tlAddr);
+      expect(parsed, "CallScheduled not found").to.not.be.undefined;
+
+      const { target, value, data, predecessor, delay } = parsed.args;
+      expect(target).to.equal(tokenAddr);
+      expect(value).to.equal(0n);
+      expect(predecessor).to.equal(ethers.ZeroHash);
+      expect(data.slice(0, 10)).to.equal(SELECTOR_UNPAUSE);
+      expect(delay).to.equal(minDelayRead);
+    });
+
+    it("proposeOwnershipTransferTo: selector == transferOwnership(address), 두 번 호출하면 id 다름", async function () {
+      const tlAddr = await timelock.getAddress();
+      const tokenAddr = await xpass.getAddress();
+      const newOwner = (await ethers.getSigners())[3].address;
+
+      const rc1 = await (await timelock.connect(admin).proposeOwnershipTransferTo(tokenAddr, newOwner)).wait();
+      const p1 = findCallScheduled(rc1, timelock.interface, tlAddr);
+      expect(p1, "CallScheduled(1) not found").to.not.be.undefined;
+      expect(p1.args.data.slice(0, 10)).to.equal(SELECTOR_TRANSFER_OWNERSHIP);
+
+      const rc2 = await (await timelock.connect(admin).proposeOwnershipTransferTo(tokenAddr, newOwner)).wait();
+      const p2 = findCallScheduled(rc2, timelock.interface, tlAddr);
+      expect(p2, "CallScheduled(2) not found").to.not.be.undefined;
+
+      expect(p2.args.id).to.not.equal(p1.args.id);
+    });
+
+    it("Function selector constants validation", async function () {
+      const tokenAddr = await xpass.getAddress();
+      const tlAddr = await timelock.getAddress();
+
+      // pause() selector 검증
+      const pauseTx = await timelock.connect(admin).proposePause(tokenAddr);
+      const pauseRc = await pauseTx.wait();
+      const pauseParsed = findCallScheduled(pauseRc, timelock.interface, tlAddr);
+      expect(pauseParsed.args.data.slice(0, 10)).to.equal(SELECTOR_PAUSE);
+      expect(pauseParsed.args.data.slice(0, 10)).to.equal("0x8456cb59");
+
+      // unpause() selector 검증
+      const unpauseTx = await timelock.connect(admin).proposeUnpause(tokenAddr);
+      const unpauseRc = await unpauseTx.wait();
+      const unpauseParsed = findCallScheduled(unpauseRc, timelock.interface, tlAddr);
+      expect(unpauseParsed.args.data.slice(0, 10)).to.equal(SELECTOR_UNPAUSE);
+      expect(unpauseParsed.args.data.slice(0, 10)).to.equal("0x3f4ba83a");
+
+      // transferOwnership(address) selector 검증
+      const transferTx = await timelock.connect(admin).proposeOwnershipTransferTo(tokenAddr, other.address);
+      const transferRc = await transferTx.wait();
+      const transferParsed = findCallScheduled(transferRc, timelock.interface, tlAddr);
+      expect(transferParsed.args.data.slice(0, 10)).to.equal(SELECTOR_TRANSFER_OWNERSHIP);
+      expect(transferParsed.args.data.slice(0, 10)).to.equal("0xf2fde38b");
+
+      // 상수 값들이 올바른지 검증
+      expect(SELECTOR_PAUSE).to.equal("0x8456cb59");
+      expect(SELECTOR_UNPAUSE).to.equal("0x3f4ba83a");
+      expect(SELECTOR_TRANSFER_OWNERSHIP).to.equal("0xf2fde38b");
+    });
+  });
 });

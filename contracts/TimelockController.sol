@@ -42,6 +42,14 @@ contract XPassTimelockController is TimelockController {
         arr[0] = addr;
         return arr;
     }
+
+    // --- Fix for audit finding: ensure unique salt per proposal ---
+    uint256 private _saltNonce;
+    function _nextSalt(bytes4 tag) internal returns (bytes32) {
+        _saltNonce += 1;
+        return keccak256(abi.encodePacked(address(this), tag, _saltNonce));
+    }
+    // --------------------------------------------------------------------
     
     /**
      * @dev Creates a proposal to call XPassToken's pause function
@@ -50,8 +58,9 @@ contract XPassTimelockController is TimelockController {
      */
     function proposePause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("pause()");
-        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), bytes32(0));
-        this.schedule(xpassToken, 0, data, bytes32(0), bytes32(0), 0);
+        bytes32 salt = _nextSalt(bytes4(keccak256("PAUSE")));
+        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), salt);
+        this.schedule(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -61,8 +70,9 @@ contract XPassTimelockController is TimelockController {
      */
     function proposeUnpause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("unpause()");
-        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), bytes32(0));
-        this.schedule(xpassToken, 0, data, bytes32(0), bytes32(0), 0);
+        bytes32 salt = _nextSalt(bytes4(keccak256("UNPAUSE")));
+        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), salt);
+        this.schedule(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -73,8 +83,9 @@ contract XPassTimelockController is TimelockController {
      */
     function proposeOwnershipTransferTo(address xpassToken, address newOwner) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("transferOwnership(address)", newOwner);
-        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), bytes32(0));
-        this.schedule(xpassToken, 0, data, bytes32(0), bytes32(0), 0);
+        bytes32 salt = _nextSalt(bytes4(keccak256("OWNERSHIP")));
+        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), salt);
+        this.schedule(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
