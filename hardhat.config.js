@@ -35,12 +35,30 @@ module.exports = {
       timeout: 60000,
       gas: 8000000,
       gasPrice: 25000000000 
+    },
+    bscTestnet: {
+      url: process.env.BSC_TESTNET_RPC_URL || "https://data-seed-prebsc-1-s1.binance.org:8545",
+      chainId: parseInt(process.env.BSC_TESTNET_CHAIN_ID) || 97,
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      timeout: 60000,
+      gas: 8000000,
+      gasPrice: 10000000000
+    },
+    bscMainnet: {
+      url: process.env.BSC_MAINNET_RPC_URL || "https://bsc-dataseed1.binance.org",
+      chainId: parseInt(process.env.BSC_MAINNET_CHAIN_ID) || 56,
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      timeout: 60000,
+      gas: 8000000,
+      gasPrice: 5000000000
     }
   },
   etherscan: {
     apiKey: {
       testnet: "unnecessary",
       mainnet: "unnecessary",
+      bscTestnet: process.env.BSCSCAN_API_KEY || "",
+      bscMainnet: process.env.BSCSCAN_API_KEY || "",
     },
     customChains: [
       {
@@ -57,6 +75,22 @@ module.exports = {
         urls: {
           apiURL: "https://mainnet-api.kaiascan.io/hardhat-verify",
           browserURL: "https://kaiascan.io",
+        }
+      },
+      {
+        network: "bscTestnet",
+        chainId: 97,
+        urls: {
+          apiURL: "https://api-testnet.bscscan.com/api",
+          browserURL: "https://testnet.bscscan.com",
+        }
+      },
+      {
+        network: "bscMainnet",
+        chainId: 56,
+        urls: {
+          apiURL: "https://api.bscscan.com/api",
+          browserURL: "https://bscscan.com",
         }
       }
     ]
