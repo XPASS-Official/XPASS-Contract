@@ -185,7 +185,6 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     {
         require(amount >= minLockAmount, "XPassKaiaBridge: amount below minimum");
         require(toChainUser != address(0), "XPassKaiaBridge: toChainUser cannot be zero address");
-        require(toChainUser != msg.sender, "XPassKaiaBridge: cannot lock to same address");
         
         // Transfer tokens from user to this contract
         xpassToken.safeTransferFrom(msg.sender, address(this), amount);
@@ -245,7 +244,6 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     {
         require(amount >= minLockAmount, "XPassKaiaBridge: amount below minimum");
         require(toChainUser != address(0), "XPassKaiaBridge: toChainUser cannot be zero address");
-        require(toChainUser != msg.sender, "XPassKaiaBridge: cannot lock to same address");
         require(deadline >= block.timestamp, "XPassKaiaBridge: permit deadline expired");
         
         // First, execute permit to set allowance

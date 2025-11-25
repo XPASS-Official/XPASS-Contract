@@ -224,7 +224,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       ).to.be.revertedWith("XPassKaiaBridge: toChainUser cannot be zero address");
     });
 
-    it("Should prevent lock to same address", async function () {
+    it("Should allow lock to same address", async function () {
       await xpassToken.connect(user1).approve(
         await kaiaBridge.getAddress(),
         LOCK_AMOUNT
@@ -232,7 +232,14 @@ describe("Bridge Lock-and-Mint Tests", function () {
 
       await expect(
         kaiaBridge.connect(user1).lockTokens(LOCK_AMOUNT, user1.address)
-      ).to.be.revertedWith("XPassKaiaBridge: cannot lock to same address");
+      ).to.emit(kaiaBridge, "TokensLocked")
+        .withArgs(
+          (lockId) => lockId !== null,
+          user1.address,
+          LOCK_AMOUNT,
+          user1.address,
+          (timestamp) => timestamp > 0
+        );
     });
 
     it("Should prevent lock when bridge is paused", async function () {
@@ -612,7 +619,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       ).to.be.revertedWith("XPassKaiaBridge: toChainUser cannot be zero address");
     });
 
-    it("Should prevent lockTokensWithPermit to same address", async function () {
+    it("Should allow lockTokensWithPermit to same address", async function () {
       const deadline = Math.floor(Date.now() / 1000) + PERMIT_DEADLINE_OFFSET;
       const sig = await generatePermitSignature(
         user1,
@@ -631,7 +638,14 @@ describe("Bridge Lock-and-Mint Tests", function () {
           sig.r,
           sig.s
         )
-      ).to.be.revertedWith("XPassKaiaBridge: cannot lock to same address");
+      ).to.emit(kaiaBridge, "TokensLocked")
+        .withArgs(
+          (lockId) => lockId !== null,
+          user1.address,
+          LOCK_AMOUNT,
+          user1.address,
+          (timestamp) => timestamp > 0
+        );
     });
 
     it("Should prevent lockTokensWithPermit when bridge is paused", async function () {
