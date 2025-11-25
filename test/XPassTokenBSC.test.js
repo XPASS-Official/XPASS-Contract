@@ -643,6 +643,65 @@ describe("XPassTokenBSC", function () {
       ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
     });
 
+    it("Should allow minting after unpause", async function () {
+      const mintAmount = ethers.parseUnits("1000", 18);
+      
+      // First, verify mint works normally
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount);
+      expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(mintAmount);
+      
+      // Pause token
+      const pauseData = xpassTokenBSC.interface.encodeFunctionData("pause");
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        pauseData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassTokenBSC.getAddress(),
+        0,
+        pauseData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+
+      // Verify mint is blocked
+      await expect(
+        xpassTokenBSC.connect(minter).mint(addr2.address, mintAmount)
+      ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
+
+      // Unpause token
+      const unpauseData = xpassTokenBSC.interface.encodeFunctionData("unpause");
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        unpauseData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassTokenBSC.getAddress(),
+        0,
+        unpauseData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+
+      // Now mint should work again
+      await expect(
+        xpassTokenBSC.connect(minter).mint(addr2.address, mintAmount)
+      ).to.emit(xpassTokenBSC, "TokensMinted")
+        .withArgs(addr2.address, mintAmount, minter.address);
+      
+      expect(await xpassTokenBSC.balanceOf(addr2.address)).to.equal(mintAmount);
+    });
+
     it("Token burning should not be possible when paused", async function () {
       // Mint tokens first
       const mintAmount = ethers.parseUnits("1000", 18);
@@ -913,30 +972,178 @@ describe("XPassTokenBSC", function () {
   });
 
   describe("Minter Role Management", function () {
-    it("Should allow owner to grant minter role", async function () {
-      await xpassTokenBSC.connect(owner).grantMinterRole(addr1.address);
+    it("Should allow TimelockController to grant minter role", async function () {
+      const grantData = xpassTokenBSC.interface.encodeFunctionData("grantMinterRole", [addr1.address]);
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassTokenBSC.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
       
       const MINTER_ROLE = await xpassTokenBSC.MINTER_ROLE();
       expect(await xpassTokenBSC.hasRole(MINTER_ROLE, addr1.address)).to.be.true;
     });
 
-    it("Should allow owner to revoke minter role", async function () {
-      await xpassTokenBSC.connect(owner).revokeMinterRole(minter.address);
+    it("Should allow TimelockController to revoke minter role", async function () {
+      const revokeData = xpassTokenBSC.interface.encodeFunctionData("revokeMinterRole", [minter.address]);
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        revokeData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassTokenBSC.getAddress(),
+        0,
+        revokeData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
       
       const MINTER_ROLE = await xpassTokenBSC.MINTER_ROLE();
       expect(await xpassTokenBSC.hasRole(MINTER_ROLE, minter.address)).to.be.false;
     });
 
-    it("Should prevent non-owner from granting minter role", async function () {
+    it("Should prevent non-timelock from granting minter role", async function () {
       await expect(
-        xpassTokenBSC.connect(addr1).grantMinterRole(addr2.address)
-      ).to.be.revertedWithCustomError(xpassTokenBSC, "OwnableUnauthorizedAccount");
+        xpassTokenBSC.connect(owner).grantMinterRole(addr2.address)
+      ).to.be.revertedWith("XPassTokenBSC: caller is not the timelock controller");
     });
 
-    it("Should prevent non-owner from revoking minter role", async function () {
+    it("Should prevent non-timelock from revoking minter role", async function () {
       await expect(
-        xpassTokenBSC.connect(addr1).revokeMinterRole(minter.address)
-      ).to.be.revertedWithCustomError(xpassTokenBSC, "OwnableUnauthorizedAccount");
+        xpassTokenBSC.connect(owner).revokeMinterRole(minter.address)
+      ).to.be.revertedWith("XPassTokenBSC: caller is not the timelock controller");
+    });
+
+    it("Should prevent granting minter role to zero address", async function () {
+      const grantData = xpassTokenBSC.interface.encodeFunctionData("grantMinterRole", [ethers.ZeroAddress]);
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+
+      await expect(
+        timelockController.execute(
+          await xpassTokenBSC.getAddress(),
+          0,
+          grantData,
+          ethers.ZeroHash,
+          ethers.ZeroHash
+        )
+      ).to.be.revertedWith("XPassTokenBSC: account cannot be zero address");
+    });
+
+    it("Should prevent revoking minter role from zero address", async function () {
+      const revokeData = xpassTokenBSC.interface.encodeFunctionData("revokeMinterRole", [ethers.ZeroAddress]);
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        revokeData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+
+      await expect(
+        timelockController.execute(
+          await xpassTokenBSC.getAddress(),
+          0,
+          revokeData,
+          ethers.ZeroHash,
+          ethers.ZeroHash
+        )
+      ).to.be.revertedWith("XPassTokenBSC: account cannot be zero address");
+    });
+
+    it("Should prevent grantMinterRole when TimelockController is removed", async function () {
+      // Renounce ownership to remove TimelockController
+      await xpassTokenBSC.renounceOwnership();
+      
+      // Verify TimelockController is removed
+      expect(await xpassTokenBSC.timelockController()).to.equal(ethers.ZeroAddress);
+      
+      // When TimelockController is removed, onlyTimelock modifier checks first
+      // So even if we try to call through TimelockController, it will fail at the modifier level
+      // This test verifies that the function cannot be executed when TimelockController is zero
+      const grantData = xpassTokenBSC.interface.encodeFunctionData("grantMinterRole", [addr1.address]);
+      
+      // Try to execute through TimelockController - should fail because timelockController is zero
+      // The onlyTimelock modifier will check first and fail
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      
+      // The execute will fail because the function checks timelockController != address(0) first
+      // But actually, onlyTimelock modifier checks msg.sender == timelockController first
+      // Since timelockController is zero, msg.sender (timelockController address) != address(0)
+      // So it will fail at the modifier level with "caller is not the timelock controller"
+      await expect(
+        timelockController.execute(
+          await xpassTokenBSC.getAddress(),
+          0,
+          grantData,
+          ethers.ZeroHash,
+          ethers.ZeroHash
+        )
+      ).to.be.revertedWith("XPassTokenBSC: caller is not the timelock controller");
+    });
+
+    it("Should prevent revokeMinterRole when TimelockController is removed", async function () {
+      // Renounce ownership to remove TimelockController
+      await xpassTokenBSC.renounceOwnership();
+      
+      // Verify TimelockController is removed
+      expect(await xpassTokenBSC.timelockController()).to.equal(ethers.ZeroAddress);
+      
+      // Similar to grantMinterRole test above
+      const revokeData = xpassTokenBSC.interface.encodeFunctionData("revokeMinterRole", [minter.address]);
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        revokeData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      
+      // Will fail at modifier level because timelockController is zero
+      await expect(
+        timelockController.execute(
+          await xpassTokenBSC.getAddress(),
+          0,
+          revokeData,
+          ethers.ZeroHash,
+          ethers.ZeroHash
+        )
+      ).to.be.revertedWith("XPassTokenBSC: caller is not the timelock controller");
     });
 
     it("Should allow checking if address is minter", async function () {
@@ -947,7 +1154,23 @@ describe("XPassTokenBSC", function () {
     it("Should return correct minter count", async function () {
       expect(await xpassTokenBSC.getMinterCount()).to.equal(1);
       
-      await xpassTokenBSC.connect(owner).grantMinterRole(addr1.address);
+      const grantData = xpassTokenBSC.interface.encodeFunctionData("grantMinterRole", [addr1.address]);
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassTokenBSC.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
       expect(await xpassTokenBSC.getMinterCount()).to.equal(2);
     });
 
@@ -955,7 +1178,23 @@ describe("XPassTokenBSC", function () {
       const minterAt0 = await xpassTokenBSC.getMinterAt(0);
       expect(minterAt0).to.equal(minter.address);
       
-      await xpassTokenBSC.connect(owner).grantMinterRole(addr1.address);
+      const grantData = xpassTokenBSC.interface.encodeFunctionData("grantMinterRole", [addr1.address]);
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassTokenBSC.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
       const minterAt1 = await xpassTokenBSC.getMinterAt(1);
       expect(minterAt1).to.equal(addr1.address);
     });

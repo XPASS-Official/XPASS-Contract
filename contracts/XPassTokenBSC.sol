@@ -88,8 +88,9 @@ contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessCo
      * @param amount Amount of tokens to mint
      * @notice Only addresses with MINTER_ROLE can call this function
      * @notice Total minted amount cannot exceed MAX_SUPPLY
+     * @notice Minting is blocked when the token is paused
      */
-    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) whenNotPaused {
         require(to != address(0), "XPassTokenBSC: cannot mint to zero address");
         require(amount > 0, "XPassTokenBSC: amount must be greater than zero");
         require(totalMinted + amount <= MAX_SUPPLY, "XPassTokenBSC: exceeds maximum supply");
@@ -225,18 +226,28 @@ contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessCo
     /**
      * @dev Grant minter role to a new address
      * @param account Address to grant minter role to
-     * @notice Only owner can call this function
+     * @notice Only TimelockController can call this function
+     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
+     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
      */
-    function grantMinterRole(address account) external onlyOwner {
+    function grantMinterRole(address account) external onlyTimelock {
+        require(timelockController != address(0), "XPassTokenBSC: TimelockController has been removed");
+        require(account != address(0), "XPassTokenBSC: account cannot be zero address");
         _grantRole(MINTER_ROLE, account);
     }
     
     /**
      * @dev Revoke minter role from an address
      * @param account Address to revoke minter role from
-     * @notice Only owner can call this function
+     * @notice Only TimelockController can call this function
+     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
+     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
      */
-    function revokeMinterRole(address account) external onlyOwner {
+    function revokeMinterRole(address account) external onlyTimelock {
+        require(timelockController != address(0), "XPassTokenBSC: TimelockController has been removed");
+        require(account != address(0), "XPassTokenBSC: account cannot be zero address");
         _revokeRole(MINTER_ROLE, account);
     }
     

@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
@@ -28,17 +29,18 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  * - pause(): Pause the bridge (emergency only)
  * - unpause(): Unpause the bridge
  * 
+ * The following functions require TimelockController (time-delayed execution):
+ * - updateBscTokenAddress(): Update BSC token address
+ * - updateBscChainId(): Update BSC chain ID
+ * - updateMinLockAmount(): Update minimum lock amount
+ * 
  * The following functions do NOT use TimelockController (immediate execution):
- * - updateBscTokenAddress(): Update BSC token address (DEFAULT_ADMIN_ROLE only)
- * - updateBscChainId(): Update BSC chain ID (DEFAULT_ADMIN_ROLE only)
- * - updateMinLockAmount(): Update minimum lock amount (DEFAULT_ADMIN_ROLE only)
  * - grantUnlockerRole() / revokeUnlockerRole(): Manage unlocker roles (DEFAULT_ADMIN_ROLE only)
  * - grantPauserRole() / revokePauserRole(): Manage pauser roles (DEFAULT_ADMIN_ROLE only)
  * - changeTimelockController(): Update TimelockController address (DEFAULT_ADMIN_ROLE only)
  * 
  * Note: Configuration changes (updateBscTokenAddress, updateBscChainId, updateMinLockAmount)
- * are executed immediately by DEFAULT_ADMIN_ROLE for operational flexibility, but these
- * should be managed through Multi-Sig wallet for security.
+ * now require TimelockController for enhanced security and time-delayed execution.
  */
 contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
@@ -55,6 +57,9 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     // XPassToken contract address on Kaia
     IERC20 public immutable xpassToken;
     
+    // XPassToken as IERC20Permit for permit functionality
+    IERC20Permit public immutable xpassTokenPermit;
+  
     // BSC token contract address (for reference)
     address public bscTokenAddress;
     
@@ -150,6 +155,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
         require(_timelockController != address(0), "XPassKaiaBridge: timelock controller cannot be zero address");
         
         xpassToken = IERC20(_xpassToken);
+        xpassTokenPermit = IERC20Permit(_xpassToken);
         bscTokenAddress = _bscTokenAddress;
         bscChainId = _bscChainId;
         minLockAmount = 1 * 10**18; // Default: 1 token minimum
@@ -182,6 +188,76 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
         require(toChainUser != msg.sender, "XPassKaiaBridge: cannot lock to same address");
         
         // Transfer tokens from user to this contract
+        xpassToken.safeTransferFrom(msg.sender, address(this), amount);
+        
+        // Increment lock ID counter
+        _lockIdCounter++;
+        // Generate unique lock ID using counter and previous block hash (prevents predictability)
+        bytes32 lockId = keccak256(abi.encodePacked(
+            block.chainid,
+            msg.sender,
+            amount,
+            toChainUser,
+            _lockIdCounter,
+            blockhash(block.number - 1) // Previous block hash for unpredictability
+        ));
+        
+        // Mark as processed (optional, for reference)
+        processedLocks[lockId] = true;
+        
+        // Update statistics
+        totalLocked += amount;
+        
+        // Emit event for off-chain monitoring
+        emit TokensLocked(
+            lockId,
+            msg.sender,
+            amount,
+            toChainUser,
+            block.timestamp
+        );
+    }
+    
+    /**
+     * @dev Lock tokens to bridge to BSC using permit (signature-based approval)
+     * @param amount Amount of tokens to lock
+     * @param toChainUser Address on BSC chain to receive minted tokens
+     * @param deadline Deadline for the permit signature (Unix timestamp)
+     * @param v Recovery byte of the signature
+     * @param r First 32 bytes of the signature
+     * @param s Next 32 bytes of the signature
+     * @notice This function combines permit() and lockTokens() in a single transaction
+     * @notice User must sign a permit message off-chain first
+     * @notice Emits TokensLocked event for off-chain monitoring
+     * @notice This improves UX by reducing gas costs and transaction count
+     */
+    function lockTokensWithPermit(
+        uint256 amount,
+        address toChainUser,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) 
+        external 
+        nonReentrant 
+        whenNotPaused 
+    {
+        require(amount >= minLockAmount, "XPassKaiaBridge: amount below minimum");
+        require(toChainUser != address(0), "XPassKaiaBridge: toChainUser cannot be zero address");
+        require(toChainUser != msg.sender, "XPassKaiaBridge: cannot lock to same address");
+        require(deadline >= block.timestamp, "XPassKaiaBridge: permit deadline expired");
+        
+        // First, execute permit to set allowance
+        xpassTokenPermit.permit(
+            msg.sender,        // owner
+            address(this),     // spender (this bridge contract)
+            amount,            // value
+            deadline,          // deadline
+            v, r, s            // signature
+        );
+        
+        // Now transfer tokens from user to this contract
         xpassToken.safeTransferFrom(msg.sender, address(this), amount);
         
         // Increment lock ID counter
@@ -366,13 +442,16 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     /**
      * @dev Update BSC token address
      * @param newBscTokenAddress New BSC token contract address
-     * @notice Only DEFAULT_ADMIN_ROLE can call this function
-     * @notice NO TIMELOCK: This function executes immediately (should be managed through Multi-Sig)
+     * @notice Only TimelockController can call this function
+     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
+     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
      */
     function updateBscTokenAddress(address newBscTokenAddress) 
         external 
-        onlyRole(DEFAULT_ADMIN_ROLE) 
+        onlyTimelock 
     {
+        require(timelockController != address(0), "XPassKaiaBridge: TimelockController has been removed");
         require(newBscTokenAddress != address(0), "XPassKaiaBridge: new address cannot be zero");
         require(newBscTokenAddress != bscTokenAddress, "XPassKaiaBridge: address unchanged");
         
@@ -385,13 +464,16 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     /**
      * @dev Update BSC chain ID
      * @param newBscChainId New BSC chain ID
-     * @notice Only DEFAULT_ADMIN_ROLE can call this function
-     * @notice NO TIMELOCK: This function executes immediately (should be managed through Multi-Sig)
+     * @notice Only TimelockController can call this function
+     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
+     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
      */
     function updateBscChainId(uint256 newBscChainId) 
         external 
-        onlyRole(DEFAULT_ADMIN_ROLE) 
+        onlyTimelock 
     {
+        require(timelockController != address(0), "XPassKaiaBridge: TimelockController has been removed");
         require(newBscChainId == 56 || newBscChainId == 97, "XPassKaiaBridge: invalid chain ID");
         require(newBscChainId != bscChainId, "XPassKaiaBridge: chain ID unchanged");
         
@@ -404,13 +486,16 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     /**
      * @dev Update minimum lock amount
      * @param newMinLockAmount New minimum lock amount
-     * @notice Only DEFAULT_ADMIN_ROLE can call this function
-     * @notice NO TIMELOCK: This function executes immediately (should be managed through Multi-Sig)
+     * @notice Only TimelockController can call this function
+     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
+     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
      */
     function updateMinLockAmount(uint256 newMinLockAmount) 
         external 
-        onlyRole(DEFAULT_ADMIN_ROLE) 
+        onlyTimelock 
     {
+        require(timelockController != address(0), "XPassKaiaBridge: TimelockController has been removed");
         require(newMinLockAmount > 0, "XPassKaiaBridge: min amount must be greater than zero");
         require(newMinLockAmount != minLockAmount, "XPassKaiaBridge: amount unchanged");
         
