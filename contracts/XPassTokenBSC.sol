@@ -105,23 +105,84 @@ contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessCo
      * @dev Override burn function to track total minted
      * @param amount Amount of tokens to burn
      * @notice Users can burn their tokens to unlock on Kaia chain
+     * @notice This function does not specify a Kaia address, so relayer will use the burn sender's address
      */
     function burn(uint256 amount) public override {
         super.burn(amount);
         // Note: We don't decrease totalMinted because burned tokens
         // are still counted towards the max supply limit
+        // Note: TokensBurned event is not emitted here - use burnToKaia() to specify Kaia address
     }
     
     /**
      * @dev Override burnFrom function to track total minted
      * @param account Address to burn tokens from
      * @param amount Amount of tokens to burn
+     * @notice This function does not specify a Kaia address, so relayer will use the burn sender's address
      */
     function burnFrom(address account, uint256 amount) public override {
         super.burnFrom(account, amount);
         // Note: We don't decrease totalMinted because burned tokens
         // are still counted towards the max supply limit
+        // Note: TokensBurned event is not emitted here - use burnFromToKaia() to specify Kaia address
     }
+    
+    /**
+     * @dev Burn tokens and specify Kaia address for unlock
+     * @param kaiaAddress Kaia address to receive unlocked tokens
+     * @param amount Amount of tokens to burn
+     * @notice Users can burn their tokens and specify which Kaia address should receive the unlocked tokens
+     * @notice This function emits TokensBurned event with kaiaAddress for relayer to process
+     */
+    function burnToKaia(address kaiaAddress, uint256 amount) public {
+        require(kaiaAddress != address(0), "XPassTokenBSC: kaiaAddress cannot be zero address");
+        require(amount > 0, "XPassTokenBSC: amount must be greater than zero");
+        
+        super.burn(amount);
+        
+        emit TokensBurned(msg.sender, amount, _addressToString(kaiaAddress));
+    }
+    
+    /**
+     * @dev Burn tokens from an account and specify Kaia address for unlock
+     * @param account Address to burn tokens from
+     * @param kaiaAddress Kaia address to receive unlocked tokens
+     * @param amount Amount of tokens to burn
+     * @notice Users can burn tokens from an approved account and specify which Kaia address should receive the unlocked tokens
+     * @notice This function emits TokensBurned event with kaiaAddress for relayer to process
+     */
+    function burnFromToKaia(address account, address kaiaAddress, uint256 amount) public {
+        require(account != address(0), "XPassTokenBSC: account cannot be zero address");
+        require(kaiaAddress != address(0), "XPassTokenBSC: kaiaAddress cannot be zero address");
+        require(amount > 0, "XPassTokenBSC: amount must be greater than zero");
+        
+        super.burnFrom(account, amount);
+        
+        emit TokensBurned(account, amount, _addressToString(kaiaAddress));
+    }
+    
+    /**
+     * @dev Internal helper function to convert address to string
+     * @param addr Address to convert
+     * @return String representation of the address (0x...)
+     */
+    function _addressToString(address addr) internal pure returns (string memory) {
+        bytes memory buffer = new bytes(42);
+        buffer[0] = '0';
+        buffer[1] = 'x';
+        
+        for (uint256 i = 0; i < 20; i++) {
+            buffer[2 + i * 2] = _HEX_SYMBOLS[uint8(uint160(addr) >> (8 * (19 - i)) & 0xf)];
+            buffer[3 + i * 2] = _HEX_SYMBOLS[uint8(uint160(addr) >> (8 * (19 - i)) & 0xf0) >> 4];
+        }
+        
+        return string(buffer);
+    }
+    
+    /**
+     * @dev Hex symbols for address string conversion
+     */
+    bytes16 private constant _HEX_SYMBOLS = "0123456789abcdef";
     
     /**
      * @dev Pause token transfers (TimelockController only)

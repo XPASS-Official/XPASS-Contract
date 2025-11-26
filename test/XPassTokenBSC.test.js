@@ -384,6 +384,236 @@ describe("XPassTokenBSC", function () {
     });
   });
 
+  describe("Token Burning to Kaia Address", function () {
+    beforeEach(async function () {
+      // Mint some tokens for testing
+      const mintAmount = ethers.parseUnits("1000", 18);
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount);
+    });
+
+    it("Should allow user to burn tokens and specify Kaia address", async function () {
+      const burnAmount = ethers.parseUnits("500", 18);
+      const kaiaAddress = addr2.address; // Different address for Kaia
+      const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
+      const initialSupply = await xpassTokenBSC.totalSupply();
+      
+      // Check that TokensBurned event is emitted
+      // Note: kaiaAddress is indexed string, so we verify event emission separately
+      const tx = await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount);
+      const receipt = await tx.wait();
+      
+      // Verify TokensBurned event was emitted
+      const tokensBurnedEvent = receipt.logs.find(
+        log => {
+          try {
+            const parsedLog = xpassTokenBSC.interface.parseLog(log);
+            return parsedLog && parsedLog.name === "TokensBurned";
+          } catch {
+            return false;
+          }
+        }
+      );
+      expect(tokensBurnedEvent).to.not.be.undefined;
+      
+      // Verify contract state changes
+      expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(initialBalance - burnAmount);
+      expect(await xpassTokenBSC.totalSupply()).to.equal(initialSupply - burnAmount);
+      // totalMinted should remain the same
+      expect(await xpassTokenBSC.totalMinted()).to.equal(initialSupply);
+    });
+
+    it("Should prevent burnToKaia with zero Kaia address", async function () {
+      const burnAmount = ethers.parseUnits("500", 18);
+      
+      await expect(
+        xpassTokenBSC.connect(addr1).burnToKaia(ethers.ZeroAddress, burnAmount)
+      ).to.be.revertedWith("XPassTokenBSC: kaiaAddress cannot be zero address");
+    });
+
+    it("Should prevent burnToKaia with zero amount", async function () {
+      const kaiaAddress = addr2.address;
+      
+      await expect(
+        xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, 0)
+      ).to.be.revertedWith("XPassTokenBSC: amount must be greater than zero");
+    });
+
+    it("Should prevent burnToKaia with insufficient balance", async function () {
+      const balance = await xpassTokenBSC.balanceOf(addr1.address);
+      const excessiveAmount = balance + 1n;
+      const kaiaAddress = addr2.address;
+      
+      await expect(
+        xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, excessiveAmount)
+      ).to.be.revertedWithCustomError(xpassTokenBSC, "ERC20InsufficientBalance");
+    });
+
+    it("Should allow burnFromToKaia with approval", async function () {
+      const burnAmount = ethers.parseUnits("300", 18);
+      const approveAmount = burnAmount;
+      const kaiaAddress = addr2.address;
+      
+      await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
+      
+      // Check that TokensBurned event is emitted
+      // Note: kaiaAddress is indexed string, so we verify event emission separately
+      const tx = await xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, kaiaAddress, burnAmount);
+      const receipt = await tx.wait();
+      
+      // Verify TokensBurned event was emitted
+      const tokensBurnedEvent = receipt.logs.find(
+        log => {
+          try {
+            const parsedLog = xpassTokenBSC.interface.parseLog(log);
+            return parsedLog && parsedLog.name === "TokensBurned";
+          } catch {
+            return false;
+          }
+        }
+      );
+      expect(tokensBurnedEvent).to.not.be.undefined;
+      
+      // Verify contract state changes
+      const balance = await xpassTokenBSC.balanceOf(addr1.address);
+      const expectedBalance = ethers.parseUnits("1000", 18) - burnAmount;
+      expect(balance).to.equal(expectedBalance);
+    });
+
+    it("Should prevent burnFromToKaia with zero account address", async function () {
+      const burnAmount = ethers.parseUnits("300", 18);
+      const kaiaAddress = addr2.address;
+      
+      await expect(
+        xpassTokenBSC.connect(addr2).burnFromToKaia(ethers.ZeroAddress, kaiaAddress, burnAmount)
+      ).to.be.revertedWith("XPassTokenBSC: account cannot be zero address");
+    });
+
+    it("Should prevent burnFromToKaia with zero Kaia address", async function () {
+      const burnAmount = ethers.parseUnits("300", 18);
+      const approveAmount = burnAmount;
+      
+      await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
+      
+      await expect(
+        xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, ethers.ZeroAddress, burnAmount)
+      ).to.be.revertedWith("XPassTokenBSC: kaiaAddress cannot be zero address");
+    });
+
+    it("Should prevent burnFromToKaia with zero amount", async function () {
+      const kaiaAddress = addr2.address;
+      
+      await expect(
+        xpassTokenBSC.connect(addr1).burnFromToKaia(addr1.address, kaiaAddress, 0)
+      ).to.be.revertedWith("XPassTokenBSC: amount must be greater than zero");
+    });
+
+    it("Should prevent burnFromToKaia with insufficient allowance", async function () {
+      const burnAmount = ethers.parseUnits("500", 18);
+      const approveAmount = ethers.parseUnits("300", 18); // Less than burnAmount
+      const kaiaAddress = addr2.address;
+      
+      await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
+      
+      await expect(
+        xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, kaiaAddress, burnAmount)
+      ).to.be.revertedWithCustomError(xpassTokenBSC, "ERC20InsufficientAllowance");
+    });
+
+    it("Should emit Transfer event when using burnToKaia", async function () {
+      const burnAmount = ethers.parseUnits("200", 18);
+      const kaiaAddress = addr2.address;
+      
+      await expect(xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount))
+        .to.emit(xpassTokenBSC, "Transfer")
+        .withArgs(addr1.address, ethers.ZeroAddress, burnAmount);
+    });
+
+    it("Should emit Transfer event when using burnFromToKaia", async function () {
+      const burnAmount = ethers.parseUnits("200", 18);
+      const approveAmount = burnAmount;
+      const kaiaAddress = addr2.address;
+      
+      await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
+      
+      await expect(xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, kaiaAddress, burnAmount))
+        .to.emit(xpassTokenBSC, "Transfer")
+        .withArgs(addr1.address, ethers.ZeroAddress, burnAmount);
+    });
+
+    it("Should allow different Kaia addresses for different burns", async function () {
+      const burnAmount1 = ethers.parseUnits("200", 18);
+      const burnAmount2 = ethers.parseUnits("300", 18);
+      const kaiaAddress1 = addr2.address;
+      const kaiaAddress2 = addrs[0].address;
+      
+      await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress1, burnAmount1);
+      await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress2, burnAmount2);
+      
+      const balance = await xpassTokenBSC.balanceOf(addr1.address);
+      const expectedBalance = ethers.parseUnits("1000", 18) - burnAmount1 - burnAmount2;
+      expect(balance).to.equal(expectedBalance);
+    });
+
+    it("Should prevent burnToKaia when paused", async function () {
+      // Pause token
+      const pauseData = xpassTokenBSC.interface.encodeFunctionData("pause");
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        pauseData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassTokenBSC.getAddress(),
+        0,
+        pauseData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+
+      const burnAmount = ethers.parseUnits("100", 18);
+      const kaiaAddress = addr2.address;
+      
+      await expect(
+        xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount)
+      ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
+    });
+
+    it("Should prevent burnFromToKaia when paused", async function () {
+      const burnAmount = ethers.parseUnits("100", 18);
+      const approveAmount = burnAmount;
+      const kaiaAddress = addr2.address;
+      
+      await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
+      
+      // Pause token
+      const pauseData = xpassTokenBSC.interface.encodeFunctionData("pause");
+      await timelockController.schedule(
+        await xpassTokenBSC.getAddress(),
+        0,
+        pauseData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        PRODUCTION_DELAY
+      );
+      await time.increase(PRODUCTION_DELAY + 1);
+      await timelockController.execute(
+        await xpassTokenBSC.getAddress(),
+        0,
+        pauseData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
+      
+      await expect(
+        xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, kaiaAddress, burnAmount)
+      ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
+    });
+  });
+
   describe("Token Transfer", function () {
     beforeEach(async function () {
       // Mint some tokens for testing
