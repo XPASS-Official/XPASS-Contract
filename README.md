@@ -139,7 +139,7 @@ TIMELOCK_DELAY=60  # seconds (ignored on mainnet)
 - **Mainnet**: TBD (Deploy when ready)
 
 ## 📦 Token Allocation
-![X-PASS](./img/ALLOCATION.jpg)
+![X-PASS](./img/ALLOCATION.png)
 
 A total of **1,000,000,000 XPASS** tokens are minted at deployment under a **single, non-upgradeable contract** and secured as follows:
 
