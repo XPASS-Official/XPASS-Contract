@@ -2332,6 +2332,55 @@ describe("XPassTokenBSC", function () {
       // Verify owner is also renounced
       expect(await xpassTokenBSC.owner()).to.equal(ethers.ZeroAddress);
     });
+
+    it("Should not allow renounceOwnership without any minter", async function() {
+      // First, verify we have at least one minter
+      expect(await xpassTokenBSC.getMinterCount()).to.be.greaterThan(0);
+      
+      // Revoke all minter roles through TimelockController
+      const minterCount = await xpassTokenBSC.getMinterCount();
+      for (let i = 0; i < Number(minterCount); i++) {
+        const minterAddress = await xpassTokenBSC.getMinterAt(0); // Always get index 0, as list shrinks
+        const revokeData = xpassTokenBSC.interface.encodeFunctionData("revokeMinterRole", [minterAddress]);
+        
+        await timelockController.schedule(
+          await xpassTokenBSC.getAddress(),
+          0,
+          revokeData,
+          ethers.ZeroHash,
+          ethers.ZeroHash,
+          PRODUCTION_DELAY
+        );
+        await time.increase(PRODUCTION_DELAY + 1);
+        await timelockController.execute(
+          await xpassTokenBSC.getAddress(),
+          0,
+          revokeData,
+          ethers.ZeroHash,
+          ethers.ZeroHash
+        );
+      }
+      
+      // Verify no minters exist
+      expect(await xpassTokenBSC.getMinterCount()).to.equal(0);
+      
+      // Should not be able to renounce ownership without any minter
+      await expect(xpassTokenBSC.renounceOwnership())
+        .to.be.revertedWith("XPassTokenBSC: cannot renounce ownership without any minter");
+    });
+
+    it("Should allow renounceOwnership when at least one minter exists", async function() {
+      // Verify we have at least one minter
+      expect(await xpassTokenBSC.getMinterCount()).to.be.greaterThan(0);
+      
+      // Should be able to renounce ownership when minter exists
+      await expect(xpassTokenBSC.renounceOwnership())
+        .to.emit(xpassTokenBSC, "TimelockControllerChanged")
+        .withArgs(await timelockController.getAddress(), ethers.ZeroAddress);
+      
+      // Verify ownership was renounced
+      expect(await xpassTokenBSC.owner()).to.equal(ethers.ZeroAddress);
+    });
   });
 
   describe("Minimum Amount Boundary Tests", function () {

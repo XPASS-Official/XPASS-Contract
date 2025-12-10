@@ -354,10 +354,15 @@ contract XPassTokenBSC is ERC20, ERC20Pausable, Ownable, AccessControlEnumerable
      * @dev Override renounceOwnership to prevent renouncement when paused
      * @notice This prevents ownership renouncement when token is paused to avoid permanent pause
      * @notice If not paused, TimelockController is automatically removed before renouncement
+     * @notice Requires at least one MINTER_ROLE account to exist to prevent permanent minting disable
      */
     function renounceOwnership() public override onlyOwner {
         // Prevent renouncement when token is paused
         require(!paused(), "XPassTokenBSC: cannot renounce ownership while paused");
+        
+        // Ensure at least one MINTER_ROLE account exists
+        uint256 minterCount = getRoleMemberCount(MINTER_ROLE);
+        require(minterCount > 0, "XPassTokenBSC: cannot renounce ownership without any minter");
         
         // Remove TimelockController before renouncing ownership (only when not paused)
         if (timelockController != address(0)) {
