@@ -52,8 +52,8 @@ contract XPassTimelockController is TimelockController {
     // --------------------------------------------------------------------
     
     /**
-     * @dev Creates a proposal to call XPassToken's pause function
-     * @param xpassToken XPassToken contract address
+     * @dev Creates a proposal to call pause function
+     * @param xpassToken Token contract address (XPassToken or XPassTokenBSC)
      * @return proposalId Generated proposal ID
      */
     function proposePause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
@@ -64,8 +64,8 @@ contract XPassTimelockController is TimelockController {
     }
     
     /**
-     * @dev Creates a proposal to call XPassToken's unpause function
-     * @param xpassToken XPassToken contract address
+     * @dev Creates a proposal to call unpause function
+     * @param xpassToken Token contract address (XPassToken or XPassTokenBSC)
      * @return proposalId Generated proposal ID
      */
     function proposeUnpause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
@@ -138,6 +138,58 @@ contract XPassTimelockController is TimelockController {
         bytes32 salt = _nextSalt(bytes4(keccak256("REVOKE_UNLOCKER")));
         proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
         this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+    }
+    
+    /**
+     * @dev Creates a proposal to update BSC token address in XPassKaiaBridge
+     * @param kaiaBridge XPassKaiaBridge contract address
+     * @param newBscTokenAddress New BSC token contract address
+     * @return proposalId Generated proposal ID
+     */
+    function proposeUpdateBscTokenAddress(address kaiaBridge, address newBscTokenAddress) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
+        bytes memory data = abi.encodeWithSignature("updateBscTokenAddress(address)", newBscTokenAddress);
+        bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_BSC_TOKEN")));
+        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
+        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+    }
+    
+    /**
+     * @dev Creates a proposal to update BSC chain ID in XPassKaiaBridge
+     * @param kaiaBridge XPassKaiaBridge contract address
+     * @param newBscChainId New BSC chain ID
+     * @return proposalId Generated proposal ID
+     */
+    function proposeUpdateBscChainId(address kaiaBridge, uint256 newBscChainId) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
+        bytes memory data = abi.encodeWithSignature("updateBscChainId(uint256)", newBscChainId);
+        bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_BSC_CHAIN")));
+        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
+        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+    }
+    
+    /**
+     * @dev Creates a proposal to update minimum lock/unlock amount in XPassKaiaBridge
+     * @param kaiaBridge XPassKaiaBridge contract address
+     * @param newMinLockUnlockAmount New minimum lock and unlock amount
+     * @return proposalId Generated proposal ID
+     */
+    function proposeUpdateMinLockUnlockAmount(address kaiaBridge, uint256 newMinLockUnlockAmount) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
+        bytes memory data = abi.encodeWithSignature("updateMinLockUnlockAmount(uint256)", newMinLockUnlockAmount);
+        bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_MIN_LOCK")));
+        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
+        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+    }
+    
+    /**
+     * @dev Creates a proposal to update minimum mint/burn amount in XPassTokenBSC
+     * @param xpassTokenBSC XPassTokenBSC contract address
+     * @param newMinMintBurnAmount New minimum mint and burn amount
+     * @return proposalId Generated proposal ID
+     */
+    function proposeUpdateMinMintBurnAmount(address xpassTokenBSC, uint256 newMinMintBurnAmount) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
+        bytes memory data = abi.encodeWithSignature("updateMinMintBurnAmount(uint256)", newMinMintBurnAmount);
+        bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_MIN_MINT")));
+        proposalId = this.hashOperation(xpassTokenBSC, 0, data, bytes32(0), salt);
+        this.schedule(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
