@@ -2,7 +2,6 @@
 pragma solidity ^0.8.30;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
@@ -23,10 +22,16 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
  * 5. Pausable: Emergency pause functionality (TimelockController only)
  * 6. Permit: Signature-based approvals (gas savings)
  */
-contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessControlEnumerable, ERC20Permit {
+contract XPassTokenBSC is ERC20, ERC20Pausable, Ownable, AccessControlEnumerable, ERC20Permit {
     
     // Maximum supply (1,000,000,000 tokens) - same as Kaia's MAX_SUPPLY
     uint256 private constant MAX_SUPPLY = 1_000_000_000 * 10**18;
+    
+    // Minimum amount for mint and burn operations (0.1 tokens) - default value
+    uint256 public constant MIN_MINT_BURN_AMOUNT = 1 * 10**17; // 0.1 * 10**18
+    
+    // Minimum amount for mint and burn operations (can be updated via updateMinMintBurnAmount)
+    uint256 public minMintBurnAmount;
     
     // Role for minters (bridge contracts or authorized addresses)
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
@@ -34,13 +39,18 @@ contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessCo
     // Total amount of tokens minted so far
     uint256 public totalMinted;
     
+    // Track processed mint transactions to prevent duplicates
+    // Key: lockId (from Kaia bridge) -> processed
+    mapping(bytes32 => bool) public processedMints;
+    
     // Custom events
-    event TokensMinted(address indexed to, uint256 amount, address indexed minter);
-    event TokensBurned(address indexed from, uint256 amount, string indexed kaiaAddress);
+    event TokensMinted(address indexed to, uint256 amount, address indexed minter, bytes32 indexed lockId);
+    event TokensBurned(address indexed from, uint256 amount, address indexed kaiaAddress);
     event MaxSupplyUpdated(uint256 oldMaxSupply, uint256 newMaxSupply);
     event TokensPaused();
     event TokensUnpaused();
     event TimelockControllerChanged(address indexed oldTimelockController, address indexed newTimelockController);
+    event MinMintBurnAmountUpdated(uint256 oldAmount, uint256 newAmount);
     
     // State variable to hold the address of the TimelockController contract
     address public timelockController;
@@ -78,6 +88,9 @@ contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessCo
         // Set timelock controller
         timelockController = _timelockController;
         
+        // Initialize minMintBurnAmount to default MIN_MINT_BURN_AMOUNT
+        minMintBurnAmount = MIN_MINT_BURN_AMOUNT;
+        
         // Initial supply is 0 - tokens will be minted through bridge
         totalMinted = 0;
     }
@@ -86,45 +99,26 @@ contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessCo
      * @dev Mint tokens to a specific address
      * @param to Address to mint tokens to
      * @param amount Amount of tokens to mint
+     * @param lockId Lock ID from Kaia bridge transaction (for duplicate prevention and monitoring)
      * @notice Only addresses with MINTER_ROLE can call this function
      * @notice Total minted amount cannot exceed MAX_SUPPLY
      * @notice Minting is blocked when the token is paused
+     * @notice Prevents duplicate mints using lockId from Kaia bridge
      */
-    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) whenNotPaused {
+    function mint(address to, uint256 amount, bytes32 lockId) external onlyRole(MINTER_ROLE) whenNotPaused {
         require(to != address(0), "XPassTokenBSC: cannot mint to zero address");
-        require(amount > 0, "XPassTokenBSC: amount must be greater than zero");
+        require(amount >= minMintBurnAmount, "XPassTokenBSC: amount below minimum");
         require(totalMinted + amount <= MAX_SUPPLY, "XPassTokenBSC: exceeds maximum supply");
+        require(lockId != bytes32(0), "XPassTokenBSC: lockId cannot be zero");
+        require(!processedMints[lockId], "XPassTokenBSC: mint already processed");
+        
+        // Mark as processed
+        processedMints[lockId] = true;
         
         totalMinted += amount;
         _mint(to, amount);
         
-        emit TokensMinted(to, amount, msg.sender);
-    }
-    
-    /**
-     * @dev Override burn function to track total minted
-     * @param amount Amount of tokens to burn
-     * @notice Users can burn their tokens to unlock on Kaia chain
-     * @notice This function does not specify a Kaia address, so relayer will use the burn sender's address
-     */
-    function burn(uint256 amount) public override {
-        super.burn(amount);
-        // Note: We don't decrease totalMinted because burned tokens
-        // are still counted towards the max supply limit
-        // Note: TokensBurned event is not emitted here - use burnToKaia() to specify Kaia address
-    }
-    
-    /**
-     * @dev Override burnFrom function to track total minted
-     * @param account Address to burn tokens from
-     * @param amount Amount of tokens to burn
-     * @notice This function does not specify a Kaia address, so relayer will use the burn sender's address
-     */
-    function burnFrom(address account, uint256 amount) public override {
-        super.burnFrom(account, amount);
-        // Note: We don't decrease totalMinted because burned tokens
-        // are still counted towards the max supply limit
-        // Note: TokensBurned event is not emitted here - use burnFromToKaia() to specify Kaia address
+        emit TokensMinted(to, amount, msg.sender, lockId);
     }
     
     /**
@@ -136,11 +130,15 @@ contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessCo
      */
     function burnToKaia(address kaiaAddress, uint256 amount) public {
         require(kaiaAddress != address(0), "XPassTokenBSC: kaiaAddress cannot be zero address");
-        require(amount > 0, "XPassTokenBSC: amount must be greater than zero");
+        require(amount >= minMintBurnAmount, "XPassTokenBSC: amount below minimum");
         
-        super.burn(amount);
+        // Burn tokens first (this will revert if balance is insufficient)
+        _burn(msg.sender, amount);
         
-        emit TokensBurned(msg.sender, amount, _addressToString(kaiaAddress));
+        // Decrease totalMinted when tokens are burned (after successful burn)
+        totalMinted -= amount;
+        
+        emit TokensBurned(msg.sender, amount, kaiaAddress);
     }
     
     /**
@@ -154,35 +152,17 @@ contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessCo
     function burnFromToKaia(address account, address kaiaAddress, uint256 amount) public {
         require(account != address(0), "XPassTokenBSC: account cannot be zero address");
         require(kaiaAddress != address(0), "XPassTokenBSC: kaiaAddress cannot be zero address");
-        require(amount > 0, "XPassTokenBSC: amount must be greater than zero");
+        require(amount >= minMintBurnAmount, "XPassTokenBSC: amount below minimum");
         
-        super.burnFrom(account, amount);
+        // Spend allowance and burn tokens first (this will revert if balance/allowance is insufficient)
+        _spendAllowance(account, msg.sender, amount);
+        _burn(account, amount);
         
-        emit TokensBurned(account, amount, _addressToString(kaiaAddress));
+        // Decrease totalMinted when tokens are burned (after successful burn)
+        totalMinted -= amount;
+        
+        emit TokensBurned(account, amount, kaiaAddress);
     }
-    
-    /**
-     * @dev Internal helper function to convert address to string
-     * @param addr Address to convert
-     * @return String representation of the address (0x...)
-     */
-    function _addressToString(address addr) internal pure returns (string memory) {
-        bytes memory buffer = new bytes(42);
-        buffer[0] = '0';
-        buffer[1] = 'x';
-        
-        for (uint256 i = 0; i < 20; i++) {
-            buffer[2 + i * 2] = _HEX_SYMBOLS[uint8(uint160(addr) >> (8 * (19 - i)) & 0xf)];
-            buffer[3 + i * 2] = _HEX_SYMBOLS[uint8(uint160(addr) >> (8 * (19 - i)) & 0xf0) >> 4];
-        }
-        
-        return string(buffer);
-    }
-    
-    /**
-     * @dev Hex symbols for address string conversion
-     */
-    bytes16 private constant _HEX_SYMBOLS = "0123456789abcdef";
     
     /**
      * @dev Pause token transfers (TimelockController only)
@@ -339,6 +319,37 @@ contract XPassTokenBSC is ERC20, ERC20Burnable, ERC20Pausable, Ownable, AccessCo
         return getRoleMember(MINTER_ROLE, index);
     }
     
+    /**
+     * @dev Check if a mint has been processed
+     * @param lockId Lock ID from Kaia bridge transaction
+     * @return True if mint has been processed
+     */
+    function isMintProcessed(bytes32 lockId) external view returns (bool) {
+        return processedMints[lockId];
+    }
+    
+    /**
+     * @dev Update minimum mint and burn amount
+     * @param newMinMintBurnAmount New minimum mint and burn amount
+     * @notice Only TimelockController can call this function
+     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
+     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
+     */
+    function updateMinMintBurnAmount(uint256 newMinMintBurnAmount) 
+        external 
+        onlyTimelock 
+    {
+        require(timelockController != address(0), "XPassTokenBSC: TimelockController has been removed");
+        require(newMinMintBurnAmount > 0, "XPassTokenBSC: min amount must be greater than zero");
+        require(newMinMintBurnAmount != minMintBurnAmount, "XPassTokenBSC: amount unchanged");
+        
+        uint256 oldAmount = minMintBurnAmount;
+        minMintBurnAmount = newMinMintBurnAmount;
+        
+        emit MinMintBurnAmountUpdated(oldAmount, newMinMintBurnAmount);
+    }
+
     /**
      * @dev Override renounceOwnership to prevent renouncement when paused
      * @notice This prevents ownership renouncement when token is paused to avoid permanent pause

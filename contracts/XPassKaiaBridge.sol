@@ -19,27 +19,24 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  * Security features:
  * - ReentrancyGuard: Prevents reentrancy attacks
  * - AccessControl: Role-based access control for unlock operations
- * - Pausable: Emergency pause functionality (TimelockController required)
+ * - Pausable: Emergency pause functionality (PAUSER_ROLE only, immediate execution)
  * - Duplicate prevention: Tracks processed transactions to prevent double processing
  * - TimelockController: Time-delayed execution for critical operations
  * 
  * TimelockController Usage:
  * ========================
  * The following functions require TimelockController (time-delayed execution):
- * - pause(): Pause the bridge (emergency only)
- * - unpause(): Unpause the bridge
- * 
- * The following functions require TimelockController (time-delayed execution):
  * - updateBscTokenAddress(): Update BSC token address
  * - updateBscChainId(): Update BSC chain ID
- * - updateMinLockAmount(): Update minimum lock amount
+ * - updateMinLockUnlockAmount(): Update minimum lock and unlock amount
+ * - grantUnlockerRole() / revokeUnlockerRole(): Manage unlocker roles
  * 
  * The following functions do NOT use TimelockController (immediate execution):
- * - grantUnlockerRole() / revokeUnlockerRole(): Manage unlocker roles (DEFAULT_ADMIN_ROLE only)
+ * - pause() / unpause(): Pause/unpause the bridge (PAUSER_ROLE only, for emergency situations)
  * - grantPauserRole() / revokePauserRole(): Manage pauser roles (DEFAULT_ADMIN_ROLE only)
  * - changeTimelockController(): Update TimelockController address (DEFAULT_ADMIN_ROLE only)
  * 
- * Note: Configuration changes (updateBscTokenAddress, updateBscChainId, updateMinLockAmount)
+ * Note: Configuration changes (updateBscTokenAddress, updateBscChainId, updateMinLockUnlockAmount)
  * now require TimelockController for enhanced security and time-delayed execution.
  */
 contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
@@ -48,11 +45,14 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     // Role for addresses that can unlock tokens (off-chain relayer or multi-sig)
     bytes32 public constant UNLOCKER_ROLE = keccak256("UNLOCKER_ROLE");
     
-    // Role for addresses that can pause/unpause the bridge (deprecated - now uses TimelockController)
+    // Role for addresses that can pause/unpause the bridge
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     // Maximum batch size for batch unlock operations (DoS prevention)
     uint256 public constant MAX_BATCH_SIZE = 100;
+
+    // Minimum amount for lock and unlock operations (0.1 tokens) - default value
+    uint256 public constant MIN_LOCK_UNLOCK_AMOUNT = 1 * 10**17; // 0.1 * 10**18
 
     // XPassToken contract address on Kaia
     IERC20 public immutable xpassToken;
@@ -66,8 +66,8 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     // BSC chain ID (for reference)
     uint256 public bscChainId;
     
-    // Minimum lock amount (to prevent dust attacks)
-    uint256 public minLockAmount;
+    // Minimum lock and unlock amount (to prevent dust attacks, can be updated via updateMinLockUnlockAmount)
+    uint256 public minLockUnlockAmount;
     
     // Total amount of tokens locked (for statistics)
     uint256 public totalLocked;
@@ -119,7 +119,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     
     event BscTokenAddressUpdated(address oldAddress, address newAddress);
     event BscChainIdUpdated(uint256 oldChainId, uint256 newChainId);
-    event MinLockAmountUpdated(uint256 oldAmount, uint256 newAmount);
+    event MinLockUnlockAmountUpdated(uint256 oldAmount, uint256 newAmount);
     event TimelockControllerChanged(address indexed oldTimelockController, address indexed newTimelockController);
     
     /**
@@ -158,7 +158,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
         xpassTokenPermit = IERC20Permit(_xpassToken);
         bscTokenAddress = _bscTokenAddress;
         bscChainId = _bscChainId;
-        minLockAmount = 1 * 10**18; // Default: 1 token minimum
+        minLockUnlockAmount = MIN_LOCK_UNLOCK_AMOUNT; // Default: 0.1 token minimum
         timelockController = _timelockController;
         
         // Grant admin role to owner
@@ -167,7 +167,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
         // Grant unlocker role to initial unlocker
         _grantRole(UNLOCKER_ROLE, _initialUnlocker);
         
-        // Grant pauser role to owner (for backward compatibility, but pause/unpause now use TimelockController)
+        // Grant pauser role to owner (for pause/unpause functionality)
         _grantRole(PAUSER_ROLE, _initialOwner);
     }
     
@@ -183,7 +183,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
         nonReentrant 
         whenNotPaused 
     {
-        require(amount >= minLockAmount, "XPassKaiaBridge: amount below minimum");
+        require(amount >= minLockUnlockAmount, "XPassKaiaBridge: amount below minimum");
         require(toChainUser != address(0), "XPassKaiaBridge: toChainUser cannot be zero address");
         
         // Transfer tokens from user to this contract
@@ -242,7 +242,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
         nonReentrant 
         whenNotPaused 
     {
-        require(amount >= minLockAmount, "XPassKaiaBridge: amount below minimum");
+        require(amount >= minLockUnlockAmount, "XPassKaiaBridge: amount below minimum");
         require(toChainUser != address(0), "XPassKaiaBridge: toChainUser cannot be zero address");
         require(deadline >= block.timestamp, "XPassKaiaBridge: permit deadline expired");
         
@@ -305,7 +305,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
         whenNotPaused
     {
         require(to != address(0), "XPassKaiaBridge: to cannot be zero address");
-        require(amount > 0, "XPassKaiaBridge: amount must be greater than zero");
+        require(amount >= minLockUnlockAmount, "XPassKaiaBridge: amount below minimum");
         require(bscTxHash != bytes32(0), "XPassKaiaBridge: bscTxHash cannot be zero");
         
         // Create unique unlock ID to prevent duplicates
@@ -376,7 +376,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
         // Validate all unlocks first
         for (uint256 i = 0; i < recipients.length; i++) {
             require(recipients[i] != address(0), "XPassKaiaBridge: invalid recipient");
-            require(amounts[i] > 0, "XPassKaiaBridge: invalid amount");
+            require(amounts[i] >= minLockUnlockAmount, "XPassKaiaBridge: amount below minimum");
             require(bscTxHashes[i] != bytes32(0), "XPassKaiaBridge: invalid tx hash");
             
             unlockIds[i] = keccak256(abi.encodePacked(
@@ -412,27 +412,23 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     }
     
     /**
-     * @dev Pause the bridge (emergency only)
-     * @notice Only TimelockController can call this function
-     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
-     * @notice If TimelockController is removed (zero address), this function becomes inactive
-     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
+     * @dev Pause the bridge
+     * @notice Only PAUSER_ROLE (Multi-Sig) can call this function
+     * @notice This allows immediate pause in emergency situations without timelock delay
+     * @notice NO TIMELOCK: This function executes immediately (should be managed through Multi-Sig)
      */
-    function pause() public onlyTimelock {
-        require(timelockController != address(0), "XPassKaiaBridge: TimelockController has been removed");
+    function pause() public onlyRole(PAUSER_ROLE) {
         _pause();
         emit BridgePaused(msg.sender);
     }
     
     /**
      * @dev Unpause the bridge
-     * @notice Only TimelockController can call this function
-     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
-     * @notice If TimelockController is removed (zero address), this function becomes inactive
-     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
+     * @notice Only PAUSER_ROLE (Multi-Sig) can call this function
+     * @notice This allows immediate unpause in emergency situations without timelock delay
+     * @notice NO TIMELOCK: This function executes immediately (should be managed through Multi-Sig)
      */
-    function unpause() public onlyTimelock {
-        require(timelockController != address(0), "XPassKaiaBridge: TimelockController has been removed");
+    function unpause() public onlyRole(PAUSER_ROLE) {
         _unpause();
         emit BridgeUnpaused(msg.sender);
     }
@@ -482,44 +478,58 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
     }
     
     /**
-     * @dev Update minimum lock amount
-     * @param newMinLockAmount New minimum lock amount
+     * @dev Update minimum lock and unlock amount
+     * @param newMinLockUnlockAmount New minimum lock and unlock amount
      * @notice Only TimelockController can call this function
      * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
      * @notice If TimelockController is removed (zero address), this function becomes inactive
      * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
      */
-    function updateMinLockAmount(uint256 newMinLockAmount) 
+    function updateMinLockUnlockAmount(uint256 newMinLockUnlockAmount) 
         external 
         onlyTimelock 
     {
         require(timelockController != address(0), "XPassKaiaBridge: TimelockController has been removed");
-        require(newMinLockAmount > 0, "XPassKaiaBridge: min amount must be greater than zero");
-        require(newMinLockAmount != minLockAmount, "XPassKaiaBridge: amount unchanged");
+        require(newMinLockUnlockAmount > 0, "XPassKaiaBridge: min amount must be greater than zero");
+        require(newMinLockUnlockAmount != minLockUnlockAmount, "XPassKaiaBridge: amount unchanged");
         
-        uint256 oldAmount = minLockAmount;
-        minLockAmount = newMinLockAmount;
+        uint256 oldAmount = minLockUnlockAmount;
+        minLockUnlockAmount = newMinLockUnlockAmount;
         
-        emit MinLockAmountUpdated(oldAmount, newMinLockAmount);
+        emit MinLockUnlockAmountUpdated(oldAmount, newMinLockUnlockAmount);
     }
     
     /**
      * @dev Grant unlocker role to an address
      * @param account Address to grant unlocker role to
-     * @notice Only DEFAULT_ADMIN_ROLE can call this function
-     * @notice NO TIMELOCK: This function executes immediately (should be managed through Multi-Sig)
+     * @notice Only TimelockController can call this function
+     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
+     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
      */
-    function grantUnlockerRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function grantUnlockerRole(address account) 
+        external 
+        onlyTimelock 
+    {
+        require(timelockController != address(0), "XPassKaiaBridge: TimelockController has been removed");
+        require(account != address(0), "XPassKaiaBridge: account cannot be zero address");
         _grantRole(UNLOCKER_ROLE, account);
     }
     
     /**
      * @dev Revoke unlocker role from an address
      * @param account Address to revoke unlocker role from
-     * @notice Only DEFAULT_ADMIN_ROLE can call this function
-     * @notice NO TIMELOCK: This function executes immediately (should be managed through Multi-Sig)
+     * @notice Only TimelockController can call this function
+     * @notice When using Multi-Sig, this requires a proposal and a time-locked execution
+     * @notice If TimelockController is removed (zero address), this function becomes inactive
+     * @notice TIMELOCK REQUIRED: This function uses TimelockController for time-delayed execution
      */
-    function revokeUnlockerRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function revokeUnlockerRole(address account) 
+        external 
+        onlyTimelock 
+    {
+        require(timelockController != address(0), "XPassKaiaBridge: TimelockController has been removed");
+        require(account != address(0), "XPassKaiaBridge: account cannot be zero address");
         _revokeRole(UNLOCKER_ROLE, account);
     }
     
@@ -528,7 +538,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
      * @param account Address to grant pauser role to
      * @notice Only DEFAULT_ADMIN_ROLE can call this function
      * @notice NO TIMELOCK: This function executes immediately (should be managed through Multi-Sig)
-     * @notice Note: PAUSER_ROLE is deprecated as pause/unpause now use TimelockController
+     * @notice Note: PAUSER_ROLE is used for pause/unpause functionality
      */
     function grantPauserRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _grantRole(PAUSER_ROLE, account);
@@ -539,7 +549,7 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
      * @param account Address to revoke pauser role from
      * @notice Only DEFAULT_ADMIN_ROLE can call this function
      * @notice NO TIMELOCK: This function executes immediately (should be managed through Multi-Sig)
-     * @notice Note: PAUSER_ROLE is deprecated as pause/unpause now use TimelockController
+     * @notice Note: PAUSER_ROLE is used for pause/unpause functionality
      */
     function revokePauserRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _revokeRole(PAUSER_ROLE, account);
@@ -592,17 +602,6 @@ contract XPassKaiaBridge is AccessControl, ReentrancyGuard, Pausable {
         timelockController = newTimelockController;
         
         emit TimelockControllerChanged(oldTimelockController, newTimelockController);
-    }
-    
-    /**
-     * @dev Internal function to remove the TimelockController (sets to zero address)
-     * @notice This is only called internally when needed
-     */
-    function _removeTimelockController() internal {
-        address oldTimelockController = timelockController;
-        timelockController = address(0);
-        
-        emit TimelockControllerChanged(oldTimelockController, address(0));
     }
     
     /**

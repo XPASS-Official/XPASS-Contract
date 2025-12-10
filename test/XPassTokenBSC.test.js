@@ -21,6 +21,13 @@ describe("XPassTokenBSC", function () {
   let addr1;
   let addr2;
   let addrs;
+  
+  // Helper function to generate unique lockId for testing
+  let lockIdCounter = 0;
+  function generateLockId() {
+    lockIdCounter++;
+    return ethers.keccak256(ethers.toUtf8Bytes(`test-lock-id-${lockIdCounter}-${Date.now()}`));
+  }
 
   beforeEach(async function () {
     // Get accounts
@@ -92,7 +99,8 @@ describe("XPassTokenBSC", function () {
   describe("Token Minting", function () {
     it("Should allow minter to mint tokens", async function () {
       const mintAmount = ethers.parseUnits("1000", 18);
-      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId);
       
       expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(mintAmount);
       expect(await xpassTokenBSC.totalSupply()).to.equal(mintAmount);
@@ -101,47 +109,72 @@ describe("XPassTokenBSC", function () {
 
     it("Should emit TokensMinted event", async function () {
       const mintAmount = ethers.parseUnits("1000", 18);
+      const lockId = generateLockId();
       
-      await expect(xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount))
+      await expect(xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId))
         .to.emit(xpassTokenBSC, "TokensMinted")
-        .withArgs(addr1.address, mintAmount, minter.address);
+        .withArgs(addr1.address, mintAmount, minter.address, lockId);
     });
 
     it("Should prevent minting exceeding MAX_SUPPLY", async function () {
       const maxSupply = await xpassTokenBSC.maxSupply();
       const excessiveAmount = maxSupply + 1n;
+      const lockId = generateLockId();
       
       await expect(
-        xpassTokenBSC.connect(minter).mint(addr1.address, excessiveAmount)
+        xpassTokenBSC.connect(minter).mint(addr1.address, excessiveAmount, lockId)
       ).to.be.revertedWith("XPassTokenBSC: exceeds maximum supply");
     });
 
     it("Should prevent minting to zero address", async function () {
       const mintAmount = ethers.parseUnits("1000", 18);
+      const lockId = generateLockId();
       
       await expect(
-        xpassTokenBSC.connect(minter).mint(ethers.ZeroAddress, mintAmount)
+        xpassTokenBSC.connect(minter).mint(ethers.ZeroAddress, mintAmount, lockId)
       ).to.be.revertedWith("XPassTokenBSC: cannot mint to zero address");
     });
 
     it("Should prevent minting with zero amount", async function () {
+      const lockId = generateLockId();
       await expect(
-        xpassTokenBSC.connect(minter).mint(addr1.address, 0)
-      ).to.be.revertedWith("XPassTokenBSC: amount must be greater than zero");
+        xpassTokenBSC.connect(minter).mint(addr1.address, 0, lockId)
+      ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
+    });
+
+    it("Should prevent minting with zero lockId", async function () {
+      const mintAmount = ethers.parseUnits("1000", 18);
+      
+      await expect(
+        xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, ethers.ZeroHash)
+      ).to.be.revertedWith("XPassTokenBSC: lockId cannot be zero");
+    });
+
+    it("Should prevent duplicate minting with same lockId", async function () {
+      const mintAmount = ethers.parseUnits("1000", 18);
+      const lockId = generateLockId();
+      
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId);
+      
+      await expect(
+        xpassTokenBSC.connect(minter).mint(addr2.address, mintAmount, lockId)
+      ).to.be.revertedWith("XPassTokenBSC: mint already processed");
     });
 
     it("Should prevent minting from non-minter", async function () {
       const mintAmount = ethers.parseUnits("1000", 18);
+      const lockId = generateLockId();
       
       await expect(
-        xpassTokenBSC.connect(addr1).mint(addr1.address, mintAmount)
+        xpassTokenBSC.connect(addr1).mint(addr1.address, mintAmount, lockId)
       ).to.be.reverted;
     });
 
     it("Should allow minting up to MAX_SUPPLY", async function () {
       const maxSupply = await xpassTokenBSC.maxSupply();
+      const lockId = generateLockId();
       
-      await xpassTokenBSC.connect(minter).mint(addr1.address, maxSupply);
+      await xpassTokenBSC.connect(minter).mint(addr1.address, maxSupply, lockId);
       
       expect(await xpassTokenBSC.totalSupply()).to.equal(maxSupply);
       expect(await xpassTokenBSC.totalMinted()).to.equal(maxSupply);
@@ -149,44 +182,56 @@ describe("XPassTokenBSC", function () {
 
     it("Should prevent minting after MAX_SUPPLY is reached", async function () {
       const maxSupply = await xpassTokenBSC.maxSupply();
+      const MIN_AMOUNT = ethers.parseEther("0.1"); // Minimum amount
+      const lockId1 = generateLockId();
       
-      await xpassTokenBSC.connect(minter).mint(addr1.address, maxSupply);
+      await xpassTokenBSC.connect(minter).mint(addr1.address, maxSupply, lockId1);
       
+      // Try to mint minimum amount after max supply is reached
+      const lockId2 = generateLockId();
       await expect(
-        xpassTokenBSC.connect(minter).mint(addr2.address, 1)
+        xpassTokenBSC.connect(minter).mint(addr2.address, MIN_AMOUNT, lockId2)
       ).to.be.revertedWith("XPassTokenBSC: exceeds maximum supply");
     });
 
     it("Should track totalMinted correctly across multiple mints", async function () {
       const mintAmount1 = ethers.parseUnits("1000", 18);
       const mintAmount2 = ethers.parseUnits("2000", 18);
+      const lockId1 = generateLockId();
+      const lockId2 = generateLockId();
       
-      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount1);
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount1, lockId1);
       expect(await xpassTokenBSC.totalMinted()).to.equal(mintAmount1);
       
-      await xpassTokenBSC.connect(minter).mint(addr2.address, mintAmount2);
+      await xpassTokenBSC.connect(minter).mint(addr2.address, mintAmount2, lockId2);
       expect(await xpassTokenBSC.totalMinted()).to.equal(mintAmount1 + mintAmount2);
     });
 
     it("Should prevent minting when totalMinted + amount would exceed MAX_SUPPLY", async function () {
       const maxSupply = await xpassTokenBSC.maxSupply();
-      const amount1 = maxSupply - 1000n;
-      const amount2 = 1001n; // This would exceed MAX_SUPPLY
+      const MIN_AMOUNT = ethers.parseEther("0.1"); // Minimum amount
+      const amount1 = maxSupply - MIN_AMOUNT;
+      const amount2 = MIN_AMOUNT + 1n; // This would exceed MAX_SUPPLY
+      const lockId1 = generateLockId();
+      const lockId2 = generateLockId();
       
-      await xpassTokenBSC.connect(minter).mint(addr1.address, amount1);
+      await xpassTokenBSC.connect(minter).mint(addr1.address, amount1, lockId1);
       
       await expect(
-        xpassTokenBSC.connect(minter).mint(addr2.address, amount2)
+        xpassTokenBSC.connect(minter).mint(addr2.address, amount2, lockId2)
       ).to.be.revertedWith("XPassTokenBSC: exceeds maximum supply");
     });
 
     it("Should allow minting exactly remaining supply", async function () {
       const maxSupply = await xpassTokenBSC.maxSupply();
-      const amount1 = maxSupply - 1000n;
-      const amount2 = 1000n; // Exactly remaining
+      const MIN_AMOUNT = ethers.parseEther("0.1"); // Minimum amount
+      const amount1 = maxSupply - MIN_AMOUNT;
+      const amount2 = MIN_AMOUNT; // Exactly remaining (minimum amount)
       
-      await xpassTokenBSC.connect(minter).mint(addr1.address, amount1);
-      await xpassTokenBSC.connect(minter).mint(addr2.address, amount2);
+      const lockId1 = generateLockId();
+      const lockId2 = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(addr1.address, amount1, lockId1);
+      await xpassTokenBSC.connect(minter).mint(addr2.address, amount2, lockId2);
       
       expect(await xpassTokenBSC.totalMinted()).to.equal(maxSupply);
       expect(await xpassTokenBSC.totalSupply()).to.equal(maxSupply);
@@ -213,182 +258,20 @@ describe("XPassTokenBSC", function () {
       );
 
       const mintAmount = ethers.parseUnits("1000", 18);
+      const lockId = generateLockId();
       await expect(
-        xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount)
+        xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId)
       ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
     });
   });
 
-  describe("Token Burning", function () {
-    beforeEach(async function () {
-      // Mint some tokens for testing
-      const mintAmount = ethers.parseUnits("1000", 18);
-      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount);
-    });
-
-    it("Should allow user to burn their own tokens", async function () {
-      const burnAmount = ethers.parseUnits("500", 18);
-      const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
-      const initialSupply = await xpassTokenBSC.totalSupply();
-      
-      await xpassTokenBSC.connect(addr1).burn(burnAmount);
-      
-      expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(initialBalance - burnAmount);
-      expect(await xpassTokenBSC.totalSupply()).to.equal(initialSupply - burnAmount);
-      // totalMinted should remain the same
-      expect(await xpassTokenBSC.totalMinted()).to.equal(initialSupply);
-    });
-
-    it("Should allow burnFrom with approval", async function () {
-      const burnAmount = ethers.parseUnits("300", 18);
-      const approveAmount = burnAmount;
-      
-      await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
-      await xpassTokenBSC.connect(addr2).burnFrom(addr1.address, burnAmount);
-      
-      const balance = await xpassTokenBSC.balanceOf(addr1.address);
-      const expectedBalance = ethers.parseUnits("1000", 18) - burnAmount;
-      expect(balance).to.equal(expectedBalance);
-    });
-
-    it("Should emit Transfer event when burning", async function () {
-      const burnAmount = ethers.parseUnits("200", 18);
-      
-      await expect(xpassTokenBSC.connect(addr1).burn(burnAmount))
-        .to.emit(xpassTokenBSC, "Transfer")
-        .withArgs(addr1.address, ethers.ZeroAddress, burnAmount);
-    });
-
-    it("Should prevent burning more than balance", async function () {
-      const balance = await xpassTokenBSC.balanceOf(addr1.address);
-      const excessiveAmount = balance + 1n;
-      
-      await expect(
-        xpassTokenBSC.connect(addr1).burn(excessiveAmount)
-      ).to.be.revertedWithCustomError(xpassTokenBSC, "ERC20InsufficientBalance");
-    });
-
-    it("Should allow burning entire balance", async function () {
-      const balance = await xpassTokenBSC.balanceOf(addr1.address);
-      
-      await xpassTokenBSC.connect(addr1).burn(balance);
-      
-      expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(0);
-    });
-
-    it("Should prevent burning zero amount", async function () {
-      // OpenZeppelin v5 may allow zero amount burns, but we verify it doesn't change state
-      const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
-      const initialSupply = await xpassTokenBSC.totalSupply();
-      
-      // burn(0) may or may not revert depending on OpenZeppelin version
-      // We verify that if it doesn't revert, it doesn't change state
-      const burnResult = await xpassTokenBSC.connect(addr1).burn(0).catch(() => null);
-      
-      if (burnResult === null) {
-        // If it reverts, that's acceptable - test passes
-        // The revert could be with various error types depending on OpenZeppelin version
-        return;
-      }
-      
-      // If it doesn't revert, verify state is unchanged
-      expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(initialBalance);
-      expect(await xpassTokenBSC.totalSupply()).to.equal(initialSupply);
-    });
-
-    it("Should prevent burnFrom with insufficient allowance", async function () {
-      const burnAmount = ethers.parseUnits("500", 18);
-      const approveAmount = ethers.parseUnits("300", 18); // Less than burnAmount
-      
-      await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
-      
-      await expect(
-        xpassTokenBSC.connect(addr2).burnFrom(addr1.address, burnAmount)
-      ).to.be.revertedWithCustomError(xpassTokenBSC, "ERC20InsufficientAllowance");
-    });
-
-    it("Should prevent burnFrom with zero balance", async function () {
-      // Get current balance (from beforeEach)
-      const currentBalance = await xpassTokenBSC.balanceOf(addr1.address);
-      
-      // Burn all tokens
-      await xpassTokenBSC.connect(addr1).burn(currentBalance);
-      
-      // Verify balance is zero
-      expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(0);
-      
-      // Approve addr2 to burn from addr1
-      await xpassTokenBSC.connect(addr1).approve(addr2.address, currentBalance);
-      
-      // Try to burnFrom with zero balance - should fail with ERC20InsufficientBalance
-      // Note: burnFrom checks allowance first, then calls _burn which checks balance
-      await expect(
-        xpassTokenBSC.connect(addr2).burnFrom(addr1.address, 1)
-      ).to.be.revertedWithCustomError(xpassTokenBSC, "ERC20InsufficientBalance");
-    });
-
-    it("Should prevent burning when paused", async function () {
-      // Pause token
-      const pauseData = xpassTokenBSC.interface.encodeFunctionData("pause");
-      await timelockController.schedule(
-        await xpassTokenBSC.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        PRODUCTION_DELAY
-      );
-      await time.increase(PRODUCTION_DELAY + 1);
-      await timelockController.execute(
-        await xpassTokenBSC.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash
-      );
-
-      const burnAmount = ethers.parseUnits("100", 18);
-      await expect(
-        xpassTokenBSC.connect(addr1).burn(burnAmount)
-      ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
-    });
-
-    it("Should handle multiple burns correctly", async function () {
-      const burnAmount1 = ethers.parseUnits("200", 18);
-      const burnAmount2 = ethers.parseUnits("300", 18);
-      const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
-      const initialSupply = await xpassTokenBSC.totalSupply();
-      
-      await xpassTokenBSC.connect(addr1).burn(burnAmount1);
-      await xpassTokenBSC.connect(addr1).burn(burnAmount2);
-      
-      expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(
-        initialBalance - burnAmount1 - burnAmount2
-      );
-      expect(await xpassTokenBSC.totalSupply()).to.equal(
-        initialSupply - burnAmount1 - burnAmount2
-      );
-      // totalMinted should remain unchanged
-      expect(await xpassTokenBSC.totalMinted()).to.equal(initialSupply);
-    });
-
-    it("Should handle burnFrom with partial allowance", async function () {
-      const burnAmount = ethers.parseUnits("300", 18);
-      const approveAmount = ethers.parseUnits("500", 18); // More than burnAmount
-      
-      await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
-      await xpassTokenBSC.connect(addr2).burnFrom(addr1.address, burnAmount);
-      
-      const remainingAllowance = await xpassTokenBSC.allowance(addr1.address, addr2.address);
-      expect(remainingAllowance).to.equal(approveAmount - burnAmount);
-    });
-  });
 
   describe("Token Burning to Kaia Address", function () {
     beforeEach(async function () {
       // Mint some tokens for testing
       const mintAmount = ethers.parseUnits("1000", 18);
-      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId);
     });
 
     it("Should allow user to burn tokens and specify Kaia address", async function () {
@@ -397,29 +280,18 @@ describe("XPassTokenBSC", function () {
       const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
       const initialSupply = await xpassTokenBSC.totalSupply();
       
-      // Check that TokensBurned event is emitted
-      // Note: kaiaAddress is indexed string, so we verify event emission separately
-      const tx = await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount);
-      const receipt = await tx.wait();
-      
-      // Verify TokensBurned event was emitted
-      const tokensBurnedEvent = receipt.logs.find(
-        log => {
-          try {
-            const parsedLog = xpassTokenBSC.interface.parseLog(log);
-            return parsedLog && parsedLog.name === "TokensBurned";
-          } catch {
-            return false;
-          }
-        }
-      );
-      expect(tokensBurnedEvent).to.not.be.undefined;
+      // Check that TokensBurned event is emitted with correct parameters
+      await expect(
+        xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount)
+      )
+        .to.emit(xpassTokenBSC, "TokensBurned")
+        .withArgs(addr1.address, burnAmount, kaiaAddress);
       
       // Verify contract state changes
       expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(initialBalance - burnAmount);
       expect(await xpassTokenBSC.totalSupply()).to.equal(initialSupply - burnAmount);
-      // totalMinted should remain the same
-      expect(await xpassTokenBSC.totalMinted()).to.equal(initialSupply);
+      // totalMinted should decrease when tokens are burned
+      expect(await xpassTokenBSC.totalMinted()).to.equal(initialSupply - burnAmount);
     });
 
     it("Should prevent burnToKaia with zero Kaia address", async function () {
@@ -435,7 +307,7 @@ describe("XPassTokenBSC", function () {
       
       await expect(
         xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, 0)
-      ).to.be.revertedWith("XPassTokenBSC: amount must be greater than zero");
+      ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
     });
 
     it("Should prevent burnToKaia with insufficient balance", async function () {
@@ -455,23 +327,12 @@ describe("XPassTokenBSC", function () {
       
       await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
       
-      // Check that TokensBurned event is emitted
-      // Note: kaiaAddress is indexed string, so we verify event emission separately
-      const tx = await xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, kaiaAddress, burnAmount);
-      const receipt = await tx.wait();
-      
-      // Verify TokensBurned event was emitted
-      const tokensBurnedEvent = receipt.logs.find(
-        log => {
-          try {
-            const parsedLog = xpassTokenBSC.interface.parseLog(log);
-            return parsedLog && parsedLog.name === "TokensBurned";
-          } catch {
-            return false;
-          }
-        }
-      );
-      expect(tokensBurnedEvent).to.not.be.undefined;
+      // Check that TokensBurned event is emitted with correct parameters
+      await expect(
+        xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, kaiaAddress, burnAmount)
+      )
+        .to.emit(xpassTokenBSC, "TokensBurned")
+        .withArgs(addr1.address, burnAmount, kaiaAddress);
       
       // Verify contract state changes
       const balance = await xpassTokenBSC.balanceOf(addr1.address);
@@ -504,7 +365,7 @@ describe("XPassTokenBSC", function () {
       
       await expect(
         xpassTokenBSC.connect(addr1).burnFromToKaia(addr1.address, kaiaAddress, 0)
-      ).to.be.revertedWith("XPassTokenBSC: amount must be greater than zero");
+      ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
     });
 
     it("Should prevent burnFromToKaia with insufficient allowance", async function () {
@@ -612,13 +473,111 @@ describe("XPassTokenBSC", function () {
         xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, kaiaAddress, burnAmount)
       ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
     });
+
+    it("Should decrease totalMinted when burnToKaia is called", async function () {
+      const burnAmount = ethers.parseUnits("300", 18);
+      const kaiaAddress = addr2.address;
+      const initialTotalMinted = await xpassTokenBSC.totalMinted();
+      
+      await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount);
+      
+      const finalTotalMinted = await xpassTokenBSC.totalMinted();
+      expect(finalTotalMinted).to.equal(initialTotalMinted - burnAmount);
+    });
+
+    it("Should decrease totalMinted when burnFromToKaia is called", async function () {
+      const burnAmount = ethers.parseUnits("200", 18);
+      const kaiaAddress = addr2.address;
+      const approveAmount = burnAmount;
+      
+      await xpassTokenBSC.connect(addr1).approve(addr2.address, approveAmount);
+      
+      const initialTotalMinted = await xpassTokenBSC.totalMinted();
+      
+      await xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, kaiaAddress, burnAmount);
+      
+      const finalTotalMinted = await xpassTokenBSC.totalMinted();
+      expect(finalTotalMinted).to.equal(initialTotalMinted - burnAmount);
+    });
+
+    it("Should decrease totalMinted correctly with multiple burns", async function () {
+      const burnAmount1 = ethers.parseUnits("100", 18);
+      const burnAmount2 = ethers.parseUnits("150", 18);
+      const burnAmount3 = ethers.parseUnits("50", 18);
+      const kaiaAddress = addr2.address;
+      
+      const initialTotalMinted = await xpassTokenBSC.totalMinted();
+      
+      await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount1);
+      const totalMintedAfterFirst = await xpassTokenBSC.totalMinted();
+      expect(totalMintedAfterFirst).to.equal(initialTotalMinted - burnAmount1);
+      
+      await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount2);
+      const totalMintedAfterSecond = await xpassTokenBSC.totalMinted();
+      expect(totalMintedAfterSecond).to.equal(initialTotalMinted - burnAmount1 - burnAmount2);
+      
+      await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount3);
+      const finalTotalMinted = await xpassTokenBSC.totalMinted();
+      expect(finalTotalMinted).to.equal(initialTotalMinted - burnAmount1 - burnAmount2 - burnAmount3);
+    });
+
+    it("Should allow minting again after burning (totalMinted decreases)", async function () {
+      const initialMintAmount = ethers.parseUnits("1000", 18); // From beforeEach
+      const additionalMintAmount = ethers.parseUnits("500", 18);
+      const burnAmount = ethers.parseUnits("500", 18);
+      const finalMintAmount = ethers.parseUnits("600", 18);
+      const kaiaAddress = addr2.address;
+      
+      // Check initial state (from beforeEach)
+      const initialTotalMinted = await xpassTokenBSC.totalMinted();
+      expect(initialTotalMinted).to.equal(initialMintAmount);
+      
+      // Burn some tokens
+      await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount);
+      const totalMintedAfterBurn = await xpassTokenBSC.totalMinted();
+      expect(totalMintedAfterBurn).to.equal(initialMintAmount - burnAmount);
+      
+      // Should be able to mint again (burned tokens freed up space)
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(addr1.address, finalMintAmount, lockId);
+      const finalTotalMinted = await xpassTokenBSC.totalMinted();
+      expect(finalTotalMinted).to.equal(initialMintAmount - burnAmount + finalMintAmount);
+      
+      // Verify remainingMintableSupply is correct
+      const remainingMintable = await xpassTokenBSC.remainingMintableSupply();
+      const maxSupply = await xpassTokenBSC.maxSupply();
+      expect(remainingMintable).to.equal(maxSupply - finalTotalMinted);
+    });
+
+    it("Should correctly calculate remainingMintableSupply after burn", async function () {
+      const initialMintAmount = ethers.parseUnits("1000", 18); // From beforeEach
+      const burnAmount = ethers.parseUnits("300", 18);
+      const kaiaAddress = addr2.address;
+      
+      // Check initial state (from beforeEach)
+      const initialTotalMinted = await xpassTokenBSC.totalMinted();
+      expect(initialTotalMinted).to.equal(initialMintAmount);
+      
+      // Burn tokens
+      await xpassTokenBSC.connect(addr1).burnToKaia(kaiaAddress, burnAmount);
+      
+      // Check remaining mintable supply
+      const remainingMintable = await xpassTokenBSC.remainingMintableSupply();
+      const maxSupply = await xpassTokenBSC.maxSupply();
+      const totalMinted = await xpassTokenBSC.totalMinted();
+      
+      expect(totalMinted).to.equal(initialMintAmount - burnAmount);
+      expect(remainingMintable).to.equal(maxSupply - totalMinted);
+      expect(remainingMintable).to.equal(maxSupply - (initialMintAmount - burnAmount));
+    });
   });
 
   describe("Token Transfer", function () {
     beforeEach(async function () {
       // Mint some tokens for testing
       const mintAmount = ethers.parseUnits("1000", 18);
-      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount, lockId);
     });
 
     it("Owner should be able to transfer tokens to another address", async function () {
@@ -652,7 +611,8 @@ describe("XPassTokenBSC", function () {
     beforeEach(async function () {
       // Mint some tokens for testing
       const mintAmount = ethers.parseUnits("1000", 18);
-      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount, lockId);
     });
 
     it("User should be able to grant token usage permission to another address", async function () {
@@ -735,8 +695,9 @@ describe("XPassTokenBSC", function () {
     it("remainingMintableSupply should decrease after minting", async function () {
       const mintAmount = ethers.parseUnits("1000", 18);
       const initialRemaining = await xpassTokenBSC.remainingMintableSupply();
+      const lockId = generateLockId();
       
-      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount);
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId);
       
       const remaining = await xpassTokenBSC.remainingMintableSupply();
       expect(remaining).to.equal(initialRemaining - mintAmount);
@@ -755,7 +716,8 @@ describe("XPassTokenBSC", function () {
 
     it("canMint should return false after MAX_SUPPLY is reached", async function () {
       const maxSupply = await xpassTokenBSC.maxSupply();
-      await xpassTokenBSC.connect(minter).mint(addr1.address, maxSupply);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(addr1.address, maxSupply, lockId);
       
       expect(await xpassTokenBSC.canMint(1)).to.be.false;
     });
@@ -817,7 +779,8 @@ describe("XPassTokenBSC", function () {
     it("Token transfer should not be possible when paused", async function () {
       // Mint tokens first
       const mintAmount = ethers.parseUnits("1000", 18);
-      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount, lockId);
 
       // Pause through TimelockController
       const pauseData = xpassTokenBSC.interface.encodeFunctionData("pause");
@@ -868,8 +831,9 @@ describe("XPassTokenBSC", function () {
       );
 
       const mintAmount = ethers.parseUnits("1000", 18);
+      const lockId = generateLockId();
       await expect(
-        xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount)
+        xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId)
       ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
     });
 
@@ -877,7 +841,8 @@ describe("XPassTokenBSC", function () {
       const mintAmount = ethers.parseUnits("1000", 18);
       
       // First, verify mint works normally
-      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId);
       expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(mintAmount);
       
       // Pause token
@@ -900,8 +865,9 @@ describe("XPassTokenBSC", function () {
       );
 
       // Verify mint is blocked
+      const lockId2 = generateLockId();
       await expect(
-        xpassTokenBSC.connect(minter).mint(addr2.address, mintAmount)
+        xpassTokenBSC.connect(minter).mint(addr2.address, mintAmount, lockId2)
       ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
 
       // Unpause token
@@ -924,10 +890,11 @@ describe("XPassTokenBSC", function () {
       );
 
       // Now mint should work again
+      const lockId3 = generateLockId();
       await expect(
-        xpassTokenBSC.connect(minter).mint(addr2.address, mintAmount)
+        xpassTokenBSC.connect(minter).mint(addr2.address, mintAmount, lockId3)
       ).to.emit(xpassTokenBSC, "TokensMinted")
-        .withArgs(addr2.address, mintAmount, minter.address);
+        .withArgs(addr2.address, mintAmount, minter.address, lockId3);
       
       expect(await xpassTokenBSC.balanceOf(addr2.address)).to.equal(mintAmount);
     });
@@ -935,7 +902,8 @@ describe("XPassTokenBSC", function () {
     it("Token burning should not be possible when paused", async function () {
       // Mint tokens first
       const mintAmount = ethers.parseUnits("1000", 18);
-      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId);
 
       // Pause through TimelockController
       const pauseData = xpassTokenBSC.interface.encodeFunctionData("pause");
@@ -958,14 +926,15 @@ describe("XPassTokenBSC", function () {
       );
 
       await expect(
-        xpassTokenBSC.connect(addr1).burn(ethers.parseUnits("100", 18))
+        xpassTokenBSC.connect(addr1).burnToKaia(addr2.address, ethers.parseUnits("100", 18))
       ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
     });
 
     it("Token transfer should be possible after unpause", async function () {
       // Mint tokens first
       const mintAmount = ethers.parseUnits("1000", 18);
-      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount, lockId);
 
       // First pause
       const pauseData = xpassTokenBSC.interface.encodeFunctionData("pause");
@@ -1071,7 +1040,8 @@ describe("XPassTokenBSC", function () {
     beforeEach(async function () {
       // Mint some tokens for testing
       const mintAmount = ethers.parseUnits("1000", 18);
-      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount, lockId);
     });
 
     it("Should be able to transfer using permit", async function () {
@@ -1430,12 +1400,91 @@ describe("XPassTokenBSC", function () {
     });
   });
 
+  describe("TimelockController Convenience Functions for Minter Role", function () {
+    it("Only proposer should be able to propose grant minter role", async function () {
+      await expect(
+        timelockController.connect(addr1).proposeGrantMinterRole(
+          await xpassTokenBSC.getAddress(),
+          addr2.address
+        )
+      ).to.be.reverted;
+    });
+
+    it("Proposer should be able to propose grant minter role", async function () {
+      // Grant PROPOSER_ROLE to addr1 for this test
+      const PROPOSER_ROLE = await timelockController.PROPOSER_ROLE();
+      const tlAddr = await timelockController.getAddress();
+      
+      // Grant PROPOSER_ROLE to both addr1 and the TimelockController contract itself
+      await timelockController.grantRole(PROPOSER_ROLE, addr1.address);
+      await timelockController.grantRole(PROPOSER_ROLE, tlAddr);
+      
+      // addr1 should be able to propose grant minter role
+      await expect(
+        timelockController.connect(addr1).proposeGrantMinterRole(
+          await xpassTokenBSC.getAddress(),
+          addr2.address
+        )
+      ).to.not.be.reverted;
+    });
+
+    it("Only proposer should be able to propose revoke minter role", async function () {
+      await expect(
+        timelockController.connect(addr1).proposeRevokeMinterRole(
+          await xpassTokenBSC.getAddress(),
+          minter.address
+        )
+      ).to.be.reverted;
+    });
+
+    it("Proposer should be able to propose revoke minter role", async function () {
+      // Grant PROPOSER_ROLE to addr1 for this test
+      const PROPOSER_ROLE = await timelockController.PROPOSER_ROLE();
+      const tlAddr = await timelockController.getAddress();
+      
+      // Grant PROPOSER_ROLE to both addr1 and the TimelockController contract itself
+      await timelockController.grantRole(PROPOSER_ROLE, addr1.address);
+      await timelockController.grantRole(PROPOSER_ROLE, tlAddr);
+      
+      // addr1 should be able to propose revoke minter role
+      await expect(
+        timelockController.connect(addr1).proposeRevokeMinterRole(
+          await xpassTokenBSC.getAddress(),
+          minter.address
+        )
+      ).to.not.be.reverted;
+    });
+
+    it("Should test proposeGrantMinterRole function coverage", async function () {
+      // This test is designed to cover the proposeGrantMinterRole function
+      // Even though it will fail due to role requirements, it will execute the function
+      await expect(
+        timelockController.proposeGrantMinterRole(
+          await xpassTokenBSC.getAddress(),
+          addr2.address
+        )
+      ).to.be.reverted;
+    });
+
+    it("Should test proposeRevokeMinterRole function coverage", async function () {
+      // This test is designed to cover the proposeRevokeMinterRole function
+      // Even though it will fail due to role requirements, it will execute the function
+      await expect(
+        timelockController.proposeRevokeMinterRole(
+          await xpassTokenBSC.getAddress(),
+          minter.address
+        )
+      ).to.be.reverted;
+    });
+  });
+
   describe("Error Cases and Edge Conditions", function () {
     describe("Transfer Error Cases", function () {
       beforeEach(async function () {
         // Mint some tokens for testing
         const mintAmount = ethers.parseUnits("1000", 18);
-        await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount);
+        const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount, lockId);
       });
 
       it("Should revert transfer to zero address", async function () {
@@ -1622,7 +1671,8 @@ describe("XPassTokenBSC", function () {
       it("Should revert all token operations when paused", async function () {
         // Mint tokens first
         const mintAmount = ethers.parseUnits("1000", 18);
-        await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount);
+        const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(owner.address, mintAmount, lockId);
 
         // First pause the contract
         const pauseData = xpassTokenBSC.interface.encodeFunctionData("pause");
@@ -1877,42 +1927,47 @@ describe("XPassTokenBSC", function () {
         await xpassTokenBSC.approve(addr1.address, 0);
       });
 
-      it("Should handle minimum amount (1 wei)", async function () {
-        const minAmount = 1;
-        await xpassTokenBSC.connect(minter).mint(addr1.address, minAmount);
+      it("Should handle minimum amount (0.1 token)", async function () {
+        const MIN_AMOUNT = ethers.parseEther("0.1"); // Minimum amount
+        const lockId = generateLockId();
+        await xpassTokenBSC.connect(minter).mint(addr1.address, MIN_AMOUNT, lockId);
         
         // Transfer minimum amount
-        await expect(xpassTokenBSC.connect(addr1).transfer(addr2.address, minAmount))
+        await expect(xpassTokenBSC.connect(addr1).transfer(addr2.address, MIN_AMOUNT))
           .to.not.be.reverted;
         
         const addr2Balance = await xpassTokenBSC.balanceOf(addr2.address);
-        expect(addr2Balance).to.equal(minAmount);
+        expect(addr2Balance).to.equal(MIN_AMOUNT);
       });
 
       it("Should handle amount equal to MAX_SUPPLY", async function () {
         const maxSupply = await xpassTokenBSC.maxSupply();
         
         // Mint entire supply
-        await expect(xpassTokenBSC.connect(minter).mint(addr1.address, maxSupply))
+        const lockId1 = generateLockId();
+        await expect(xpassTokenBSC.connect(minter).mint(addr1.address, maxSupply, lockId1))
           .to.not.be.reverted;
         
         const addr1Balance = await xpassTokenBSC.balanceOf(addr1.address);
         expect(addr1Balance).to.equal(maxSupply);
       });
 
-      it("Should handle amount equal to MAX_SUPPLY minus 1 wei", async function () {
+      it("Should handle amount equal to MAX_SUPPLY minus minimum amount", async function () {
         const maxSupply = await xpassTokenBSC.maxSupply();
-        const amountMinusOne = maxSupply - 1n;
+        const MIN_AMOUNT = ethers.parseEther("0.1"); // Minimum amount
+        const amountMinusMin = maxSupply - MIN_AMOUNT;
         
-        // Mint total supply minus 1 wei
-        await expect(xpassTokenBSC.connect(minter).mint(addr1.address, amountMinusOne))
+        // Mint total supply minus minimum amount
+        const lockId2 = generateLockId();
+        await expect(xpassTokenBSC.connect(minter).mint(addr1.address, amountMinusMin, lockId2))
           .to.not.be.reverted;
         
         const addr1Balance = await xpassTokenBSC.balanceOf(addr1.address);
-        expect(addr1Balance).to.equal(amountMinusOne);
+        expect(addr1Balance).to.equal(amountMinusMin);
         
-        // Should be able to mint 1 more wei
-        await xpassTokenBSC.connect(minter).mint(addr1.address, 1);
+        // Should be able to mint minimum amount
+        const lockId = generateLockId();
+        await xpassTokenBSC.connect(minter).mint(addr1.address, MIN_AMOUNT, lockId);
         expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(maxSupply);
       });
 
@@ -1921,7 +1976,8 @@ describe("XPassTokenBSC", function () {
         const amountPlusOne = maxSupply + 1n;
         
         // Mint amount exceeding max supply should fail
-        await expect(xpassTokenBSC.connect(minter).mint(addr1.address, amountPlusOne))
+        const lockId3 = generateLockId();
+        await expect(xpassTokenBSC.connect(minter).mint(addr1.address, amountPlusOne, lockId3))
           .to.be.revertedWith("XPassTokenBSC: exceeds maximum supply");
       });
     });
@@ -1931,7 +1987,8 @@ describe("XPassTokenBSC", function () {
         const testAddress = "0x0000000000000000000000000000000000000001";
         const mintAmount = ethers.parseUnits("1000", 18);
         
-        await xpassTokenBSC.connect(minter).mint(testAddress, mintAmount);
+        const lockId = generateLockId();
+        await xpassTokenBSC.connect(minter).mint(testAddress, mintAmount, lockId);
         
         const testAddressBalance = await xpassTokenBSC.balanceOf(testAddress);
         expect(testAddressBalance).to.equal(mintAmount);
@@ -1941,7 +1998,8 @@ describe("XPassTokenBSC", function () {
         const testAddress = "0xffffffffffffffffffffffffffffffffffffffff";
         const mintAmount = ethers.parseUnits("1000", 18);
         
-        await xpassTokenBSC.connect(minter).mint(testAddress, mintAmount);
+        const lockId = generateLockId();
+        await xpassTokenBSC.connect(minter).mint(testAddress, mintAmount, lockId);
         
         const testAddressBalance = await xpassTokenBSC.balanceOf(testAddress);
         expect(testAddressBalance).to.equal(mintAmount);
@@ -2230,6 +2288,185 @@ describe("XPassTokenBSC", function () {
       
       // Verify owner is also renounced
       expect(await xpassTokenBSC.owner()).to.equal(ethers.ZeroAddress);
+    });
+  });
+
+  describe("Minimum Amount Boundary Tests", function () {
+    const MIN_AMOUNT = ethers.parseEther("0.1"); // 0.1 token
+    const BELOW_MIN_AMOUNT = ethers.parseEther("0.099999999999999999"); // Just below 0.1
+    const ABOVE_MIN_AMOUNT = ethers.parseEther("0.100000000000000001"); // Just above 0.1
+
+    describe("Mint Minimum Amount Tests", function () {
+      it("Should allow mint with exact minimum amount (0.1 token)", async function () {
+        const lockId = generateLockId();
+        await expect(
+          xpassTokenBSC.connect(minter).mint(addr1.address, MIN_AMOUNT, lockId)
+        ).to.emit(xpassTokenBSC, "TokensMinted")
+          .withArgs(addr1.address, MIN_AMOUNT, minter.address, lockId);
+
+        expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(MIN_AMOUNT);
+        expect(await xpassTokenBSC.totalMinted()).to.equal(MIN_AMOUNT);
+      });
+
+      it("Should prevent mint with amount below minimum (0.1 token)", async function () {
+        const lockId = generateLockId();
+        await expect(
+          xpassTokenBSC.connect(minter).mint(addr1.address, BELOW_MIN_AMOUNT, lockId)
+        ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
+      });
+
+      it("Should allow mint with amount above minimum (0.1 token)", async function () {
+        const lockId = generateLockId();
+        await expect(
+          xpassTokenBSC.connect(minter).mint(addr1.address, ABOVE_MIN_AMOUNT, lockId)
+        ).to.emit(xpassTokenBSC, "TokensMinted")
+          .withArgs(addr1.address, ABOVE_MIN_AMOUNT, minter.address, lockId);
+
+        expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(ABOVE_MIN_AMOUNT);
+        expect(await xpassTokenBSC.totalMinted()).to.equal(ABOVE_MIN_AMOUNT);
+      });
+
+      it("Should handle multiple mints at minimum amount", async function () {
+        const lockId1 = generateLockId();
+        const lockId2 = generateLockId();
+        const lockId3 = generateLockId();
+        await xpassTokenBSC.connect(minter).mint(addr1.address, MIN_AMOUNT, lockId1);
+        await xpassTokenBSC.connect(minter).mint(addr2.address, MIN_AMOUNT, lockId2);
+        await xpassTokenBSC.connect(minter).mint(addrs[0].address, MIN_AMOUNT, lockId3);
+
+        expect(await xpassTokenBSC.totalMinted()).to.equal(MIN_AMOUNT * 3n);
+        expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(MIN_AMOUNT);
+        expect(await xpassTokenBSC.balanceOf(addr2.address)).to.equal(MIN_AMOUNT);
+        expect(await xpassTokenBSC.balanceOf(addrs[0].address)).to.equal(MIN_AMOUNT);
+      });
+    });
+
+    describe("Burn Minimum Amount Tests", function () {
+      beforeEach(async function () {
+        // Mint tokens for burning tests
+        const mintAmount = ethers.parseEther("10");
+        const lockId = generateLockId();
+      await xpassTokenBSC.connect(minter).mint(addr1.address, mintAmount, lockId);
+      });
+
+      it("Should allow burnToKaia with exact minimum amount (0.1 token)", async function () {
+        const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
+        const initialSupply = await xpassTokenBSC.totalSupply();
+
+        await expect(
+          xpassTokenBSC.connect(addr1).burnToKaia(addr2.address, MIN_AMOUNT)
+        )
+          .to.emit(xpassTokenBSC, "TokensBurned")
+          .withArgs(addr1.address, MIN_AMOUNT, addr2.address);
+
+        expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(initialBalance - MIN_AMOUNT);
+        expect(await xpassTokenBSC.totalSupply()).to.equal(initialSupply - MIN_AMOUNT);
+      });
+
+      it("Should prevent burnToKaia with amount below minimum (0.1 token)", async function () {
+        await expect(
+          xpassTokenBSC.connect(addr1).burnToKaia(addr2.address, BELOW_MIN_AMOUNT)
+        ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
+      });
+
+      it("Should allow burnToKaia with amount above minimum (0.1 token)", async function () {
+        const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
+        const initialSupply = await xpassTokenBSC.totalSupply();
+
+        await expect(
+          xpassTokenBSC.connect(addr1).burnToKaia(addr2.address, ABOVE_MIN_AMOUNT)
+        )
+          .to.emit(xpassTokenBSC, "TokensBurned")
+          .withArgs(addr1.address, ABOVE_MIN_AMOUNT, addr2.address);
+
+        expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(initialBalance - ABOVE_MIN_AMOUNT);
+        expect(await xpassTokenBSC.totalSupply()).to.equal(initialSupply - ABOVE_MIN_AMOUNT);
+      });
+
+      it("Should allow burnFromToKaia with exact minimum amount (0.1 token)", async function () {
+        await xpassTokenBSC.connect(addr1).approve(addr2.address, MIN_AMOUNT);
+        const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
+        const initialSupply = await xpassTokenBSC.totalSupply();
+
+        await expect(
+          xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, addrs[0].address, MIN_AMOUNT)
+        )
+          .to.emit(xpassTokenBSC, "TokensBurned")
+          .withArgs(addr1.address, MIN_AMOUNT, addrs[0].address);
+
+        expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(initialBalance - MIN_AMOUNT);
+        expect(await xpassTokenBSC.totalSupply()).to.equal(initialSupply - MIN_AMOUNT);
+      });
+
+      it("Should prevent burnFromToKaia with amount below minimum (0.1 token)", async function () {
+        await xpassTokenBSC.connect(addr1).approve(addr2.address, BELOW_MIN_AMOUNT);
+
+        await expect(
+          xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, addrs[0].address, BELOW_MIN_AMOUNT)
+        ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
+      });
+
+      it("Should allow burnFromToKaia with amount above minimum (0.1 token)", async function () {
+        await xpassTokenBSC.connect(addr1).approve(addr2.address, ABOVE_MIN_AMOUNT);
+        const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
+        const initialSupply = await xpassTokenBSC.totalSupply();
+
+        await expect(
+          xpassTokenBSC.connect(addr2).burnFromToKaia(addr1.address, addrs[0].address, ABOVE_MIN_AMOUNT)
+        )
+          .to.emit(xpassTokenBSC, "TokensBurned")
+          .withArgs(addr1.address, ABOVE_MIN_AMOUNT, addrs[0].address);
+
+        expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(initialBalance - ABOVE_MIN_AMOUNT);
+        expect(await xpassTokenBSC.totalSupply()).to.equal(initialSupply - ABOVE_MIN_AMOUNT);
+      });
+
+      it("Should handle multiple burns at minimum amount", async function () {
+        const initialBalance = await xpassTokenBSC.balanceOf(addr1.address);
+        const initialSupply = await xpassTokenBSC.totalSupply();
+
+        await xpassTokenBSC.connect(addr1).burnToKaia(addr2.address, MIN_AMOUNT);
+        await xpassTokenBSC.connect(addr1).burnToKaia(addr2.address, MIN_AMOUNT);
+        await xpassTokenBSC.connect(addr1).burnToKaia(addr2.address, MIN_AMOUNT);
+
+        expect(await xpassTokenBSC.balanceOf(addr1.address)).to.equal(initialBalance - MIN_AMOUNT * 3n);
+        expect(await xpassTokenBSC.totalSupply()).to.equal(initialSupply - MIN_AMOUNT * 3n);
+      });
+    });
+
+    describe("Edge Cases for Minimum Amount", function () {
+      it("Should verify MIN_AMOUNT constant value", async function () {
+        // Verify that we can mint at minimum amount
+        const lockId = generateLockId();
+        await expect(
+          xpassTokenBSC.connect(minter).mint(addr1.address, MIN_AMOUNT, lockId)
+        ).to.not.be.reverted;
+
+        // Verify that we cannot mint below minimum
+        const lockId2 = generateLockId();
+        await expect(
+          xpassTokenBSC.connect(minter).mint(addr1.address, BELOW_MIN_AMOUNT, lockId2)
+        ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
+      });
+
+      it("Should handle minimum amount with maximum supply constraint", async function () {
+        const maxSupply = await xpassTokenBSC.maxSupply();
+        const remainingSupply = await xpassTokenBSC.remainingMintableSupply();
+
+        // If remaining supply is less than MIN_AMOUNT, we can't mint even at minimum
+        if (remainingSupply < MIN_AMOUNT) {
+          const lockId1 = generateLockId();
+          await expect(
+            xpassTokenBSC.connect(minter).mint(addr1.address, MIN_AMOUNT, lockId1)
+          ).to.be.revertedWith("XPassTokenBSC: exceeds maximum supply");
+        } else {
+          // Otherwise, we should be able to mint at minimum
+          const lockId2 = generateLockId();
+          await expect(
+            xpassTokenBSC.connect(minter).mint(addr1.address, MIN_AMOUNT, lockId2)
+          ).to.not.be.reverted;
+        }
+      });
     });
   });
 });

@@ -9,7 +9,8 @@ describe("Bridge Lock-and-Mint Tests", function () {
   const BSC_CHAIN_ID = 97; // BSC Testnet
   const LOCK_AMOUNT = ethers.parseEther("100");
   const BURN_AMOUNT = ethers.parseEther("50");
-  const MIN_LOCK_AMOUNT = ethers.parseEther("1");
+  const MIN_LOCK_AMOUNT = ethers.parseEther("0.1"); // Updated to 0.1 token
+  const MIN_AMOUNT = ethers.parseEther("0.1"); // 0.1 token (MIN_AMOUNT constant)
   const PERMIT_DEADLINE_OFFSET = 3600 * 24 * 365; // 1 year (for permit tests)
 
   let XPassToken;
@@ -27,6 +28,13 @@ describe("Bridge Lock-and-Mint Tests", function () {
   let user2;             // 일반 사용자
   let relayer;           // 브릿지 relayer
   let addrs;
+
+  // Helper function to generate unique lockId for testing
+  let lockIdCounter = 0;
+  function generateLockId() {
+    lockIdCounter++;
+    return ethers.keccak256(ethers.toUtf8Bytes(`test-lock-id-${lockIdCounter}-${Date.now()}`));
+  }
 
   beforeEach(async function () {
     [owner, user1, user2, relayer, ...addrs] = await ethers.getSigners();
@@ -88,7 +96,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should set correct min lock amount", async function () {
-      expect(await kaiaBridge.minLockAmount()).to.equal(MIN_LOCK_AMOUNT);
+      expect(await kaiaBridge.minLockUnlockAmount()).to.equal(MIN_LOCK_AMOUNT);
     });
 
     it("Should grant UNLOCKER_ROLE to relayer", async function () {
@@ -152,7 +160,8 @@ describe("Bridge Lock-and-Mint Tests", function () {
       expect(parsedLockEvent.args.from).to.equal(user1.address);
 
       // Step 3: Relayer가 BSC에서 mint (실제로는 off-chain에서 감지 후 실행)
-      await xpassTokenBSC.connect(relayer).mint(toChainUser, LOCK_AMOUNT);
+      // Use the lockId from the lock event
+      await xpassTokenBSC.connect(relayer).mint(toChainUser, LOCK_AMOUNT, lockId);
 
       // Step 4: 검증
       expect(await xpassTokenBSC.balanceOf(user2.address)).to.equal(LOCK_AMOUNT);
@@ -181,11 +190,12 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should emit TokensMinted event when minting on BSC", async function () {
+      const lockId = generateLockId();
       await expect(
-        xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT)
+        xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT, lockId)
       )
         .to.emit(xpassTokenBSC, "TokensMinted")
-        .withArgs(user1.address, LOCK_AMOUNT, relayer.address);
+        .withArgs(user1.address, LOCK_AMOUNT, relayer.address, lockId);
     });
 
     it("Should update totalLocked in bridge", async function () {
@@ -243,24 +253,8 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should prevent lock when bridge is paused", async function () {
-      // Pause bridge through TimelockController
-      const pauseData = kaiaBridge.interface.encodeFunctionData("pause");
-      await timelockController.schedule(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        TEST_DELAY
-      );
-      await time.increase(TEST_DELAY + 1);
-      await timelockController.execute(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash
-      );
+      // Pause bridge through PAUSER_ROLE (owner)
+      await kaiaBridge.connect(owner).pause();
 
       await xpassToken.connect(user1).approve(
         await kaiaBridge.getAddress(),
@@ -276,26 +270,45 @@ describe("Bridge Lock-and-Mint Tests", function () {
       const maxSupply = await xpassTokenBSC.maxSupply();
       const excessiveAmount = maxSupply + 1n;
 
+      const lockId = generateLockId();
       await expect(
-        xpassTokenBSC.connect(relayer).mint(user1.address, excessiveAmount)
+        xpassTokenBSC.connect(relayer).mint(user1.address, excessiveAmount, lockId)
       ).to.be.revertedWith("XPassTokenBSC: exceeds maximum supply");
     });
 
     it("Should prevent mint to zero address", async function () {
+      const lockId = generateLockId();
       await expect(
-        xpassTokenBSC.connect(relayer).mint(ethers.ZeroAddress, LOCK_AMOUNT)
+        xpassTokenBSC.connect(relayer).mint(ethers.ZeroAddress, LOCK_AMOUNT, lockId)
       ).to.be.revertedWith("XPassTokenBSC: cannot mint to zero address");
     });
 
     it("Should prevent mint with zero amount", async function () {
+      const lockId = generateLockId();
       await expect(
-        xpassTokenBSC.connect(relayer).mint(user1.address, 0)
-      ).to.be.revertedWith("XPassTokenBSC: amount must be greater than zero");
+        xpassTokenBSC.connect(relayer).mint(user1.address, 0, lockId)
+      ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
+    });
+
+    it("Should prevent mint with zero lockId", async function () {
+      await expect(
+        xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT, ethers.ZeroHash)
+      ).to.be.revertedWith("XPassTokenBSC: lockId cannot be zero");
+    });
+
+    it("Should prevent duplicate mint with same lockId", async function () {
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT, lockId);
+      
+      await expect(
+        xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT, lockId)
+      ).to.be.revertedWith("XPassTokenBSC: mint already processed");
     });
 
     it("Should prevent mint from non-minter", async function () {
+      const lockId = generateLockId();
       await expect(
-        xpassTokenBSC.connect(user1).mint(user1.address, LOCK_AMOUNT)
+        xpassTokenBSC.connect(user1).mint(user1.address, LOCK_AMOUNT, lockId)
       ).to.be.reverted;
     });
 
@@ -320,8 +333,9 @@ describe("Bridge Lock-and-Mint Tests", function () {
       );
 
       // Try to mint when paused
+      const lockId = generateLockId();
       await expect(
-        xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT)
+        xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT, lockId)
       ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
     });
 
@@ -346,8 +360,9 @@ describe("Bridge Lock-and-Mint Tests", function () {
       );
 
       // Verify mint is blocked
+      const lockId1 = generateLockId();
       await expect(
-        xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT)
+        xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT, lockId1)
       ).to.be.revertedWithCustomError(xpassTokenBSC, "EnforcedPause");
 
       // Unpause BSC token
@@ -370,10 +385,11 @@ describe("Bridge Lock-and-Mint Tests", function () {
       );
 
       // Now mint should work
+      const lockId2 = generateLockId();
       await expect(
-        xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT)
+        xpassTokenBSC.connect(relayer).mint(user1.address, LOCK_AMOUNT, lockId2)
       ).to.emit(xpassTokenBSC, "TokensMinted")
-        .withArgs(user1.address, LOCK_AMOUNT, relayer.address);
+        .withArgs(user1.address, LOCK_AMOUNT, relayer.address, lockId2);
       
       expect(await xpassTokenBSC.balanceOf(user1.address)).to.equal(LOCK_AMOUNT);
     });
@@ -387,16 +403,32 @@ describe("Bridge Lock-and-Mint Tests", function () {
         await kaiaBridge.getAddress(),
         lockAmount1
       );
-      await kaiaBridge.connect(user1).lockTokens(lockAmount1, user2.address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, lockAmount1);
+      const lockTx1 = await kaiaBridge.connect(user1).lockTokens(lockAmount1, user2.address);
+      const receipt1 = await lockTx1.wait();
+      const lockEvent1 = receipt1.logs.find(log => {
+        try {
+          const parsed = kaiaBridge.interface.parseLog(log);
+          return parsed && parsed.name === "TokensLocked";
+        } catch { return false; }
+      });
+      const lockId1 = kaiaBridge.interface.parseLog(lockEvent1).args.lockId;
+      await xpassTokenBSC.connect(relayer).mint(user2.address, lockAmount1, lockId1);
 
       // Second lock and mint
       await xpassToken.connect(user2).approve(
         await kaiaBridge.getAddress(),
         lockAmount2
       );
-      await kaiaBridge.connect(user2).lockTokens(lockAmount2, user1.address);
-      await xpassTokenBSC.connect(relayer).mint(user1.address, lockAmount2);
+      const lockTx2 = await kaiaBridge.connect(user2).lockTokens(lockAmount2, user1.address);
+      const receipt2 = await lockTx2.wait();
+      const lockEvent2 = receipt2.logs.find(log => {
+        try {
+          const parsed = kaiaBridge.interface.parseLog(log);
+          return parsed && parsed.name === "TokensLocked";
+        } catch { return false; }
+      });
+      const lockId2 = kaiaBridge.interface.parseLog(lockEvent2).args.lockId;
+      await xpassTokenBSC.connect(relayer).mint(user1.address, lockAmount2, lockId2);
 
       // Verify balances
       expect(await xpassTokenBSC.balanceOf(user1.address)).to.equal(lockAmount2);
@@ -404,45 +436,6 @@ describe("Bridge Lock-and-Mint Tests", function () {
       expect(await xpassTokenBSC.totalMinted()).to.equal(lockAmount1 + lockAmount2);
     });
 
-    // Helper function to generate permit signature
-    async function generatePermitSignature(owner, spender, value, deadline, tokenContract) {
-      const nonce = await tokenContract.nonces(owner.address);
-      const network = await ethers.provider.getNetwork();
-      
-      const domain = {
-        name: await tokenContract.name(),
-        version: await tokenContract.version(),
-        chainId: network.chainId,
-        verifyingContract: await tokenContract.getAddress()
-      };
-      
-      const types = {
-        Permit: [
-          { name: 'owner', type: 'address' },
-          { name: 'spender', type: 'address' },
-          { name: 'value', type: 'uint256' },
-          { name: 'nonce', type: 'uint256' },
-          { name: 'deadline', type: 'uint256' }
-        ]
-      };
-      
-      const message = {
-        owner: owner.address,
-        spender: spender,
-        value: value,
-        nonce: nonce,
-        deadline: deadline
-      };
-      
-      const signature = await owner.signTypedData(domain, types, message);
-      const sig = ethers.Signature.from(signature);
-      
-      return {
-        v: sig.v,
-        r: sig.r,
-        s: sig.s
-      };
-    }
 
     it("Should lock tokens using permit (lockTokensWithPermit)", async function () {
       const initialKaiaBalance = await xpassToken.balanceOf(user1.address);
@@ -649,24 +642,8 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should prevent lockTokensWithPermit when bridge is paused", async function () {
-      // Pause bridge through TimelockController
-      const pauseData = kaiaBridge.interface.encodeFunctionData("pause");
-      await timelockController.schedule(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        TEST_DELAY
-      );
-      await time.increase(TEST_DELAY + 1);
-      await timelockController.execute(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash
-      );
+      // Pause bridge through PAUSER_ROLE (owner)
+      await kaiaBridge.connect(owner).pause();
       
       const deadline = Math.floor(Date.now() / 1000) + PERMIT_DEADLINE_OFFSET;
       const sig = await generatePermitSignature(
@@ -749,7 +726,8 @@ describe("Bridge Lock-and-Mint Tests", function () {
         LOCK_AMOUNT
       );
       await kaiaBridge.connect(user1).lockTokens(LOCK_AMOUNT, user2.address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT, lockId);
     });
 
     it("Should burn tokens on BSC and unlock on Kaia", async function () {
@@ -758,8 +736,8 @@ describe("Bridge Lock-and-Mint Tests", function () {
       const initialBridgeBalance = await xpassToken.balanceOf(await kaiaBridge.getAddress());
       const initialTotalUnlocked = await kaiaBridge.totalUnlocked();
 
-      // Step 1: 사용자가 BSC에서 토큰 burn
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      // Step 1: 사용자가 BSC에서 토큰 burn (burnToKaia 사용)
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -787,14 +765,16 @@ describe("Bridge Lock-and-Mint Tests", function () {
 
     it("Should emit TokensBurned event when burning", async function () {
       await expect(
-        xpassTokenBSC.connect(user2).burn(BURN_AMOUNT)
+        xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT)
       )
-        .to.emit(xpassTokenBSC, "Transfer")
+        .to.emit(xpassTokenBSC, "TokensBurned")
+        .withArgs(user2.address, BURN_AMOUNT, user2.address)
+        .and.to.emit(xpassTokenBSC, "Transfer")
         .withArgs(user2.address, ethers.ZeroAddress, BURN_AMOUNT);
     });
 
     it("Should emit TokensUnlocked event with correct parameters", async function () {
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -816,7 +796,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should prevent duplicate unlocks", async function () {
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -838,7 +818,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should prevent unlock to zero address", async function () {
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -852,7 +832,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should prevent unlock with zero amount", async function () {
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -862,7 +842,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
           0,
           burnTxHash
         )
-      ).to.be.revertedWith("XPassKaiaBridge: amount must be greater than zero");
+      ).to.be.revertedWith("XPassKaiaBridge: amount below minimum");
     });
 
     it("Should prevent unlock with zero tx hash", async function () {
@@ -876,28 +856,12 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should prevent unlock when bridge is paused", async function () {
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
-      // Pause bridge through TimelockController
-      const pauseData = kaiaBridge.interface.encodeFunctionData("pause");
-      await timelockController.schedule(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        TEST_DELAY
-      );
-      await time.increase(TEST_DELAY + 1);
-      await timelockController.execute(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash
-      );
+      // Pause bridge through PAUSER_ROLE (owner)
+      await kaiaBridge.connect(owner).pause();
 
       await expect(
         kaiaBridge.connect(relayer).unlockTokens(
@@ -910,7 +874,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
 
     it("Should prevent unlock when bridge has insufficient balance", async function () {
       const excessiveAmount = LOCK_AMOUNT * 100n; // Bridge에 없는 양
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -924,7 +888,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should prevent unlock from non-unlocker", async function () {
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -943,7 +907,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       await xpassTokenBSC.connect(user2).approve(user1.address, approveAmount);
 
       await expect(
-        xpassTokenBSC.connect(user1).burnFrom(user2.address, BURN_AMOUNT)
+        xpassTokenBSC.connect(user1).burnFromToKaia(user2.address, user2.address, BURN_AMOUNT)
       ).to.not.be.reverted;
 
       expect(await xpassTokenBSC.balanceOf(user2.address)).to.equal(
@@ -952,7 +916,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should check isUnlockProcessed correctly", async function () {
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -985,10 +949,11 @@ describe("Bridge Lock-and-Mint Tests", function () {
         LOCK_AMOUNT
       );
       await kaiaBridge.connect(user1).lockTokens(LOCK_AMOUNT, user2.address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT, lockId);
 
       // 2. BSC → Kaia
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       await kaiaBridge.connect(relayer).unlockTokens(
         user2.address,
@@ -1017,9 +982,10 @@ describe("Bridge Lock-and-Mint Tests", function () {
         cycleAmount
       );
       await kaiaBridge.connect(user1).lockTokens(cycleAmount, user2.address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, cycleAmount);
+      const lockId1 = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, cycleAmount, lockId1);
       
-      const burnTx1 = await xpassTokenBSC.connect(user2).burn(cycleAmount);
+      const burnTx1 = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, cycleAmount);
       const burnReceipt1 = await burnTx1.wait();
       await kaiaBridge.connect(relayer).unlockTokens(
         user2.address,
@@ -1033,9 +999,10 @@ describe("Bridge Lock-and-Mint Tests", function () {
         cycleAmount
       );
       await kaiaBridge.connect(user2).lockTokens(cycleAmount, user1.address);
-      await xpassTokenBSC.connect(relayer).mint(user1.address, cycleAmount);
+      const lockId2 = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user1.address, cycleAmount, lockId2);
       
-      const burnTx2 = await xpassTokenBSC.connect(user1).burn(cycleAmount);
+      const burnTx2 = await xpassTokenBSC.connect(user1).burnToKaia(user1.address, cycleAmount);
       const burnReceipt2 = await burnTx2.wait();
       await kaiaBridge.connect(relayer).unlockTokens(
         user1.address,
@@ -1065,13 +1032,14 @@ describe("Bridge Lock-and-Mint Tests", function () {
           amounts[i]
         );
         await kaiaBridge.connect(user1).lockTokens(amounts[i], addrs[i].address);
-        await xpassTokenBSC.connect(relayer).mint(addrs[i].address, amounts[i]);
+        const lockId = generateLockId();
+        await xpassTokenBSC.connect(relayer).mint(addrs[i].address, amounts[i], lockId);
       }
 
       // Burn from all users
       const burnTxHashes = [];
       for (let i = 0; i < amounts.length; i++) {
-        const burnTx = await xpassTokenBSC.connect(addrs[i]).burn(amounts[i]);
+        const burnTx = await xpassTokenBSC.connect(addrs[i]).burnToKaia(addrs[i].address, amounts[i]);
         const burnReceipt = await burnTx.wait();
         burnTxHashes.push(burnReceipt.hash);
       }
@@ -1110,9 +1078,10 @@ describe("Bridge Lock-and-Mint Tests", function () {
         LOCK_AMOUNT
       );
       await kaiaBridge.connect(user1).lockTokens(LOCK_AMOUNT, user2.address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT, lockId);
 
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -1328,9 +1297,9 @@ describe("Bridge Lock-and-Mint Tests", function () {
 
     it("Should allow TimelockController to update min lock amount", async function () {
       const newMinAmount = ethers.parseEther("2");
-      const oldAmount = await kaiaBridge.minLockAmount();
+      const oldAmount = await kaiaBridge.minLockUnlockAmount();
 
-      const updateData = kaiaBridge.interface.encodeFunctionData("updateMinLockAmount", [newMinAmount]);
+      const updateData = kaiaBridge.interface.encodeFunctionData("updateMinLockUnlockAmount", [newMinAmount]);
       await timelockController.schedule(
         await kaiaBridge.getAddress(),
         0,
@@ -1350,20 +1319,20 @@ describe("Bridge Lock-and-Mint Tests", function () {
           ethers.ZeroHash
         )
       )
-        .to.emit(kaiaBridge, "MinLockAmountUpdated")
+        .to.emit(kaiaBridge, "MinLockUnlockAmountUpdated")
         .withArgs(oldAmount, newMinAmount);
 
-      expect(await kaiaBridge.minLockAmount()).to.equal(newMinAmount);
+      expect(await kaiaBridge.minLockUnlockAmount()).to.equal(newMinAmount);
     });
 
     it("Should prevent non-timelock from updating min lock amount", async function () {
       await expect(
-        kaiaBridge.connect(owner).updateMinLockAmount(ethers.parseEther("2"))
+        kaiaBridge.connect(owner).updateMinLockUnlockAmount(ethers.parseEther("2"))
       ).to.be.revertedWith("XPassKaiaBridge: caller is not the timelock controller");
     });
 
     it("Should prevent zero min lock amount", async function () {
-      const updateData = kaiaBridge.interface.encodeFunctionData("updateMinLockAmount", [0]);
+      const updateData = kaiaBridge.interface.encodeFunctionData("updateMinLockUnlockAmount", [0]);
       await timelockController.schedule(
         await kaiaBridge.getAddress(),
         0,
@@ -1386,8 +1355,8 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should prevent updating to same min lock amount", async function () {
-      const currentAmount = await kaiaBridge.minLockAmount();
-      const updateData = kaiaBridge.interface.encodeFunctionData("updateMinLockAmount", [currentAmount]);
+      const currentAmount = await kaiaBridge.minLockUnlockAmount();
+      const updateData = kaiaBridge.interface.encodeFunctionData("updateMinLockUnlockAmount", [currentAmount]);
       await timelockController.schedule(
         await kaiaBridge.getAddress(),
         0,
@@ -1424,111 +1393,149 @@ describe("Bridge Lock-and-Mint Tests", function () {
       expect(await kaiaBridge.getTimelockController()).to.not.equal(ethers.ZeroAddress);
     });
 
-    it("Should prevent updateMinLockAmount when TimelockController is removed", async function () {
+    it("Should prevent updateMinLockUnlockAmount when TimelockController is removed", async function () {
       // Similar to above - verify the check exists
       expect(await kaiaBridge.getTimelockController()).to.not.equal(ethers.ZeroAddress);
     });
   });
 
   describe("Bridge Pause Functionality", function () {
-    it("Should allow TimelockController to pause bridge", async function () {
-      const pauseData = kaiaBridge.interface.encodeFunctionData("pause");
-      await timelockController.schedule(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        TEST_DELAY
-      );
-      await time.increase(TEST_DELAY + 1);
-      
+    it("Should allow account with PAUSER_ROLE to pause bridge", async function () {
+      // owner has PAUSER_ROLE (granted in constructor)
       await expect(
-        timelockController.execute(
-          await kaiaBridge.getAddress(),
-          0,
-          pauseData,
-          ethers.ZeroHash,
-          ethers.ZeroHash
-        )
+        kaiaBridge.connect(owner).pause()
       )
         .to.emit(kaiaBridge, "BridgePaused")
-        .withArgs(await timelockController.getAddress());
+        .withArgs(owner.address);
 
       expect(await kaiaBridge.paused()).to.be.true;
     });
 
-    it("Should allow TimelockController to unpause bridge", async function () {
+    it("Should allow account with PAUSER_ROLE to unpause bridge", async function () {
       // First pause
-      const pauseData = kaiaBridge.interface.encodeFunctionData("pause");
-      await timelockController.schedule(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        TEST_DELAY
-      );
-      await time.increase(TEST_DELAY + 1);
-      await timelockController.execute(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash
-      );
+      await kaiaBridge.connect(owner).pause();
+      expect(await kaiaBridge.paused()).to.be.true;
 
       // Then unpause
-      const unpauseData = kaiaBridge.interface.encodeFunctionData("unpause");
-      await timelockController.schedule(
-        await kaiaBridge.getAddress(),
-        0,
-        unpauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        TEST_DELAY
-      );
-      await time.increase(TEST_DELAY + 1);
       await expect(
-        timelockController.execute(
-          await kaiaBridge.getAddress(),
-          0,
-          unpauseData,
-          ethers.ZeroHash,
-          ethers.ZeroHash
-        )
+        kaiaBridge.connect(owner).unpause()
       )
         .to.emit(kaiaBridge, "BridgeUnpaused")
-        .withArgs(await timelockController.getAddress());
+        .withArgs(owner.address);
 
       expect(await kaiaBridge.paused()).to.be.false;
     });
 
-    it("Should prevent non-timelock from pausing", async function () {
+    it("Should prevent account without PAUSER_ROLE from pausing", async function () {
+      // user1 does not have PAUSER_ROLE
+      await expect(
+        kaiaBridge.connect(user1).pause()
+      ).to.be.revertedWithCustomError(kaiaBridge, "AccessControlUnauthorizedAccount");
+    });
+
+    it("Should prevent account without PAUSER_ROLE from unpausing", async function () {
+      // First pause as owner (who has PAUSER_ROLE)
+      await kaiaBridge.connect(owner).pause();
+      expect(await kaiaBridge.paused()).to.be.true;
+
+      // Try to unpause as user1 (who does not have PAUSER_ROLE)
+      await expect(
+        kaiaBridge.connect(user1).unpause()
+      ).to.be.revertedWithCustomError(kaiaBridge, "AccessControlUnauthorizedAccount");
+    });
+
+    it("Should prevent DEFAULT_ADMIN_ROLE without PAUSER_ROLE from pausing", async function () {
+      // Grant DEFAULT_ADMIN_ROLE to user2, but not PAUSER_ROLE
+      const DEFAULT_ADMIN_ROLE = await kaiaBridge.DEFAULT_ADMIN_ROLE();
+      await kaiaBridge.connect(owner).grantRole(DEFAULT_ADMIN_ROLE, user2.address);
+      
+      // Verify user2 has DEFAULT_ADMIN_ROLE but not PAUSER_ROLE
+      expect(await kaiaBridge.hasRole(DEFAULT_ADMIN_ROLE, user2.address)).to.be.true;
+      const PAUSER_ROLE = await kaiaBridge.PAUSER_ROLE();
+      expect(await kaiaBridge.hasRole(PAUSER_ROLE, user2.address)).to.be.false;
+
+      // user2 should not be able to pause (only has DEFAULT_ADMIN_ROLE, not PAUSER_ROLE)
+      await expect(
+        kaiaBridge.connect(user2).pause()
+      ).to.be.revertedWithCustomError(kaiaBridge, "AccessControlUnauthorizedAccount");
+    });
+
+    it("Should prevent DEFAULT_ADMIN_ROLE without PAUSER_ROLE from unpausing", async function () {
+      // Grant DEFAULT_ADMIN_ROLE to user2, but not PAUSER_ROLE
+      const DEFAULT_ADMIN_ROLE = await kaiaBridge.DEFAULT_ADMIN_ROLE();
+      await kaiaBridge.connect(owner).grantRole(DEFAULT_ADMIN_ROLE, user2.address);
+      
+      // Verify user2 has DEFAULT_ADMIN_ROLE but not PAUSER_ROLE
+      expect(await kaiaBridge.hasRole(DEFAULT_ADMIN_ROLE, user2.address)).to.be.true;
+      const PAUSER_ROLE = await kaiaBridge.PAUSER_ROLE();
+      expect(await kaiaBridge.hasRole(PAUSER_ROLE, user2.address)).to.be.false;
+
+      // First pause as owner (who has PAUSER_ROLE)
+      await kaiaBridge.connect(owner).pause();
+      expect(await kaiaBridge.paused()).to.be.true;
+
+      // user2 should not be able to unpause (only has DEFAULT_ADMIN_ROLE, not PAUSER_ROLE)
+      await expect(
+        kaiaBridge.connect(user2).unpause()
+      ).to.be.revertedWithCustomError(kaiaBridge, "AccessControlUnauthorizedAccount");
+    });
+
+    it("Should allow account with granted PAUSER_ROLE to pause bridge", async function () {
+      // Grant PAUSER_ROLE to user1
+      await kaiaBridge.connect(owner).grantPauserRole(user1.address);
+      
+      const PAUSER_ROLE = await kaiaBridge.PAUSER_ROLE();
+      expect(await kaiaBridge.hasRole(PAUSER_ROLE, user1.address)).to.be.true;
+
+      // user1 should now be able to pause
+      await expect(
+        kaiaBridge.connect(user1).pause()
+      )
+        .to.emit(kaiaBridge, "BridgePaused")
+        .withArgs(user1.address);
+
+      expect(await kaiaBridge.paused()).to.be.true;
+    });
+
+    it("Should allow account with granted PAUSER_ROLE to unpause bridge", async function () {
+      // Grant PAUSER_ROLE to user1
+      await kaiaBridge.connect(owner).grantPauserRole(user1.address);
+      
+      const PAUSER_ROLE = await kaiaBridge.PAUSER_ROLE();
+      expect(await kaiaBridge.hasRole(PAUSER_ROLE, user1.address)).to.be.true;
+
+      // First pause as owner
+      await kaiaBridge.connect(owner).pause();
+      expect(await kaiaBridge.paused()).to.be.true;
+
+      // user1 should now be able to unpause
+      await expect(
+        kaiaBridge.connect(user1).unpause()
+      )
+        .to.emit(kaiaBridge, "BridgeUnpaused")
+        .withArgs(user1.address);
+
+      expect(await kaiaBridge.paused()).to.be.false;
+    });
+
+    it("Should prevent revoked PAUSER_ROLE from pausing", async function () {
+      // First verify owner has PAUSER_ROLE
+      const PAUSER_ROLE = await kaiaBridge.PAUSER_ROLE();
+      expect(await kaiaBridge.hasRole(PAUSER_ROLE, owner.address)).to.be.true;
+
+      // Revoke PAUSER_ROLE from owner
+      await kaiaBridge.connect(owner).revokePauserRole(owner.address);
+      expect(await kaiaBridge.hasRole(PAUSER_ROLE, owner.address)).to.be.false;
+
+      // owner should no longer be able to pause
       await expect(
         kaiaBridge.connect(owner).pause()
-      ).to.be.revertedWith("XPassKaiaBridge: caller is not the timelock controller");
+      ).to.be.revertedWithCustomError(kaiaBridge, "AccessControlUnauthorizedAccount");
     });
 
     it("Should prevent operations when paused", async function () {
-      // Pause through TimelockController
-      const pauseData = kaiaBridge.interface.encodeFunctionData("pause");
-      await timelockController.schedule(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        TEST_DELAY
-      );
-      await time.increase(TEST_DELAY + 1);
-      await timelockController.execute(
-        await kaiaBridge.getAddress(),
-        0,
-        pauseData,
-        ethers.ZeroHash,
-        ethers.ZeroHash
-      );
+      // Pause through PAUSER_ROLE (owner)
+      await kaiaBridge.connect(owner).pause();
 
       await xpassToken.connect(user1).approve(
         await kaiaBridge.getAddress(),
@@ -1542,15 +1549,51 @@ describe("Bridge Lock-and-Mint Tests", function () {
   });
 
   describe("Role Management", function () {
-    it("Should allow owner to grant unlocker role", async function () {
-      await kaiaBridge.connect(owner).grantUnlockerRole(addrs[0].address);
+    it("Should allow TimelockController to grant unlocker role", async function () {
+      const grantData = kaiaBridge.interface.encodeFunctionData("grantUnlockerRole", [addrs[0].address]);
+      
+      await timelockController.schedule(
+        await kaiaBridge.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        TEST_DELAY
+      );
+      await time.increase(TEST_DELAY + 1);
+
+      await timelockController.execute(
+        await kaiaBridge.getAddress(),
+        0,
+        grantData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
       
       const UNLOCKER_ROLE = await kaiaBridge.UNLOCKER_ROLE();
       expect(await kaiaBridge.hasRole(UNLOCKER_ROLE, addrs[0].address)).to.be.true;
     });
 
-    it("Should allow owner to revoke unlocker role", async function () {
-      await kaiaBridge.connect(owner).revokeUnlockerRole(relayer.address);
+    it("Should allow TimelockController to revoke unlocker role", async function () {
+      const revokeData = kaiaBridge.interface.encodeFunctionData("revokeUnlockerRole", [relayer.address]);
+      
+      await timelockController.schedule(
+        await kaiaBridge.getAddress(),
+        0,
+        revokeData,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        TEST_DELAY
+      );
+      await time.increase(TEST_DELAY + 1);
+
+      await timelockController.execute(
+        await kaiaBridge.getAddress(),
+        0,
+        revokeData,
+        ethers.ZeroHash,
+        ethers.ZeroHash
+      );
       
       const UNLOCKER_ROLE = await kaiaBridge.UNLOCKER_ROLE();
       expect(await kaiaBridge.hasRole(UNLOCKER_ROLE, relayer.address)).to.be.false;
@@ -1570,9 +1613,93 @@ describe("Bridge Lock-and-Mint Tests", function () {
       expect(await kaiaBridge.hasRole(PAUSER_ROLE, owner.address)).to.be.false;
     });
 
-    it("Should prevent non-owner from managing roles", async function () {
+    it("Should prevent non-timelock from granting unlocker role", async function () {
       await expect(
-        kaiaBridge.connect(user1).grantUnlockerRole(addrs[0].address)
+        kaiaBridge.connect(owner).grantUnlockerRole(addrs[0].address)
+      ).to.be.revertedWith("XPassKaiaBridge: caller is not the timelock controller");
+    });
+
+    it("Should prevent non-timelock from revoking unlocker role", async function () {
+      await expect(
+        kaiaBridge.connect(owner).revokeUnlockerRole(relayer.address)
+      ).to.be.revertedWith("XPassKaiaBridge: caller is not the timelock controller");
+    });
+  });
+
+  describe("TimelockController Convenience Functions for Unlocker Role", function () {
+    it("Only proposer should be able to propose grant unlocker role", async function () {
+      await expect(
+        timelockController.connect(user1).proposeGrantUnlockerRole(
+          await kaiaBridge.getAddress(),
+          user2.address
+        )
+      ).to.be.reverted;
+    });
+
+    it("Proposer should be able to propose grant unlocker role", async function () {
+      // Grant PROPOSER_ROLE to user1 for this test
+      const PROPOSER_ROLE = await timelockController.PROPOSER_ROLE();
+      const tlAddr = await timelockController.getAddress();
+      
+      // Grant PROPOSER_ROLE to both user1 and the TimelockController contract itself
+      await timelockController.grantRole(PROPOSER_ROLE, user1.address);
+      await timelockController.grantRole(PROPOSER_ROLE, tlAddr);
+      
+      // user1 should be able to propose grant unlocker role
+      await expect(
+        timelockController.connect(user1).proposeGrantUnlockerRole(
+          await kaiaBridge.getAddress(),
+          user2.address
+        )
+      ).to.not.be.reverted;
+    });
+
+    it("Only proposer should be able to propose revoke unlocker role", async function () {
+      await expect(
+        timelockController.connect(user1).proposeRevokeUnlockerRole(
+          await kaiaBridge.getAddress(),
+          relayer.address
+        )
+      ).to.be.reverted;
+    });
+
+    it("Proposer should be able to propose revoke unlocker role", async function () {
+      // Grant PROPOSER_ROLE to user1 for this test
+      const PROPOSER_ROLE = await timelockController.PROPOSER_ROLE();
+      const tlAddr = await timelockController.getAddress();
+      
+      // Grant PROPOSER_ROLE to both user1 and the TimelockController contract itself
+      await timelockController.grantRole(PROPOSER_ROLE, user1.address);
+      await timelockController.grantRole(PROPOSER_ROLE, tlAddr);
+      
+      // user1 should be able to propose revoke unlocker role
+      await expect(
+        timelockController.connect(user1).proposeRevokeUnlockerRole(
+          await kaiaBridge.getAddress(),
+          relayer.address
+        )
+      ).to.not.be.reverted;
+    });
+
+    it("Should test proposeGrantUnlockerRole function coverage", async function () {
+      // This test is designed to cover the proposeGrantUnlockerRole function
+      // Even though it will fail due to role requirements, it will execute the function
+      await expect(
+        timelockController.proposeGrantUnlockerRole(
+          await kaiaBridge.getAddress(),
+          user2.address
+        )
+      ).to.be.reverted;
+    });
+
+    it("Should test proposeRevokeUnlockerRole function coverage", async function () {
+      // This test is designed to cover the proposeRevokeUnlockerRole function
+      // Even though it will fail due to role requirements, it will execute the function
+      await expect(
+        timelockController.proposeRevokeUnlockerRole(
+          await kaiaBridge.getAddress(),
+          relayer.address
+        )
       ).to.be.reverted;
     });
   });
@@ -1643,9 +1770,10 @@ describe("Bridge Lock-and-Mint Tests", function () {
         LOCK_AMOUNT
       );
       await kaiaBridge.connect(user1).lockTokens(LOCK_AMOUNT, user2.address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT, lockId);
 
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -1675,11 +1803,13 @@ describe("Bridge Lock-and-Mint Tests", function () {
       );
       await kaiaBridge.connect(user1).lockTokens(LOCK_AMOUNT, user2.address);
       await kaiaBridge.connect(user1).lockTokens(LOCK_AMOUNT, addrs[0].address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT);
-      await xpassTokenBSC.connect(relayer).mint(addrs[0].address, LOCK_AMOUNT);
+      const lockId1 = generateLockId();
+      const lockId2 = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT, lockId1);
+      await xpassTokenBSC.connect(relayer).mint(addrs[0].address, LOCK_AMOUNT, lockId2);
 
       // Both users burn
-      const burnTx1 = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx1 = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt1 = await burnTx1.wait();
       const burnTxHash = burnReceipt1.hash; // Same hash for testing
 
@@ -1764,12 +1894,14 @@ describe("Bridge Lock-and-Mint Tests", function () {
       );
       await kaiaBridge.connect(user1).lockTokens(lockAmount, user2.address);
       await kaiaBridge.connect(user1).lockTokens(lockAmount, addrs[0].address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, lockAmount);
-      await xpassTokenBSC.connect(relayer).mint(addrs[0].address, lockAmount);
+      const lockId1 = generateLockId();
+      const lockId2 = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, lockAmount, lockId1);
+      await xpassTokenBSC.connect(relayer).mint(addrs[0].address, lockAmount, lockId2);
 
       // Both users burn
-      const burnTx1 = await xpassTokenBSC.connect(user2).burn(lockAmount);
-      const burnTx2 = await xpassTokenBSC.connect(addrs[0]).burn(lockAmount);
+      const burnTx1 = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, lockAmount);
+      const burnTx2 = await xpassTokenBSC.connect(addrs[0]).burnToKaia(addrs[0].address, lockAmount);
       const burnReceipt1 = await burnTx1.wait();
       const burnReceipt2 = await burnTx2.wait();
 
@@ -1821,9 +1953,10 @@ describe("Bridge Lock-and-Mint Tests", function () {
         LOCK_AMOUNT
       );
       await kaiaBridge.connect(user1).lockTokens(LOCK_AMOUNT, user2.address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT);
+      const lockId = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT, lockId);
 
-      const burnTx = await xpassTokenBSC.connect(user2).burn(BURN_AMOUNT);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, BURN_AMOUNT);
       const burnReceipt = await burnTx.wait();
       const burnTxHash = burnReceipt.hash;
 
@@ -1878,14 +2011,17 @@ describe("Bridge Lock-and-Mint Tests", function () {
       await kaiaBridge.connect(user1).lockTokens(lockAmount, addrs[0].address);
       await kaiaBridge.connect(user1).lockTokens(lockAmount, addrs[1].address);
       
-      await xpassTokenBSC.connect(relayer).mint(user2.address, lockAmount);
-      await xpassTokenBSC.connect(relayer).mint(addrs[0].address, lockAmount);
-      await xpassTokenBSC.connect(relayer).mint(addrs[1].address, lockAmount);
+      const lockId1 = generateLockId();
+      const lockId2 = generateLockId();
+      const lockId3 = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, lockAmount, lockId1);
+      await xpassTokenBSC.connect(relayer).mint(addrs[0].address, lockAmount, lockId2);
+      await xpassTokenBSC.connect(relayer).mint(addrs[1].address, lockAmount, lockId3);
 
       const initialTotalUnlocked = await kaiaBridge.totalUnlocked();
 
       // Burn and unlock for user2
-      const burnTx1 = await xpassTokenBSC.connect(user2).burn(lockAmount);
+      const burnTx1 = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, lockAmount);
       const burnReceipt1 = await burnTx1.wait();
       await kaiaBridge.connect(relayer).unlockTokens(
         user2.address,
@@ -1895,7 +2031,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       expect(await kaiaBridge.totalUnlocked()).to.equal(initialTotalUnlocked + lockAmount);
 
       // Burn and unlock for addrs[0]
-      const burnTx2 = await xpassTokenBSC.connect(addrs[0]).burn(lockAmount);
+      const burnTx2 = await xpassTokenBSC.connect(addrs[0]).burnToKaia(addrs[0].address, lockAmount);
       const burnReceipt2 = await burnTx2.wait();
       await kaiaBridge.connect(relayer).unlockTokens(
         addrs[0].address,
@@ -1905,7 +2041,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       expect(await kaiaBridge.totalUnlocked()).to.equal(initialTotalUnlocked + lockAmount * 2n);
 
       // Burn and unlock for addrs[1]
-      const burnTx3 = await xpassTokenBSC.connect(addrs[1]).burn(lockAmount);
+      const burnTx3 = await xpassTokenBSC.connect(addrs[1]).burnToKaia(addrs[1].address, lockAmount);
       const burnReceipt3 = await burnTx3.wait();
       await kaiaBridge.connect(relayer).unlockTokens(
         addrs[1].address,
@@ -1916,7 +2052,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
     });
 
     it("Should handle lock with exact minimum amount", async function () {
-      const minAmount = await kaiaBridge.minLockAmount();
+      const minAmount = await kaiaBridge.minLockUnlockAmount();
       
       await xpassToken.connect(user1).approve(
         await kaiaBridge.getAddress(),
@@ -1950,7 +2086,8 @@ describe("Bridge Lock-and-Mint Tests", function () {
         lockAmount
       );
       await kaiaBridge.connect(user1).lockTokens(lockAmount, user2.address);
-      await xpassTokenBSC.connect(relayer).mint(user2.address, lockAmount);
+      const lockId1 = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, lockAmount, lockId1);
 
       // Get the exact bridge balance after lock
       const exactBridgeBalance = await xpassToken.balanceOf(await kaiaBridge.getAddress());
@@ -1960,11 +2097,12 @@ describe("Bridge Lock-and-Mint Tests", function () {
       if (user2BscBalance < exactBridgeBalance) {
         // This shouldn't happen if lockAmount <= user2BscBalance, but just in case
         const additionalMint = exactBridgeBalance - user2BscBalance;
-        await xpassTokenBSC.connect(relayer).mint(user2.address, additionalMint);
+        const lockId2 = generateLockId();
+        await xpassTokenBSC.connect(relayer).mint(user2.address, additionalMint, lockId2);
       }
 
       // Burn and unlock exact bridge balance
-      const burnTx = await xpassTokenBSC.connect(user2).burn(exactBridgeBalance);
+      const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, exactBridgeBalance);
       const burnReceipt = await burnTx.wait();
       
       await expect(
@@ -1974,6 +2112,451 @@ describe("Bridge Lock-and-Mint Tests", function () {
           burnReceipt.hash
         )
       ).to.not.be.reverted;
+    });
+  });
+
+  // Helper function to generate permit signature (moved to top level for reuse)
+  async function generatePermitSignature(owner, spender, value, deadline, tokenContract) {
+    const nonce = await tokenContract.nonces(owner.address);
+    const network = await ethers.provider.getNetwork();
+    
+    const domain = {
+      name: await tokenContract.name(),
+      version: await tokenContract.version(),
+      chainId: network.chainId,
+      verifyingContract: await tokenContract.getAddress()
+    };
+    
+    const types = {
+      Permit: [
+        { name: 'owner', type: 'address' },
+        { name: 'spender', type: 'address' },
+        { name: 'value', type: 'uint256' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'deadline', type: 'uint256' }
+      ]
+    };
+    
+    const message = {
+      owner: owner.address,
+      spender: spender,
+      value: value,
+      nonce: nonce,
+      deadline: deadline
+    };
+    
+    const signature = await owner.signTypedData(domain, types, message);
+    const sig = ethers.Signature.from(signature);
+    
+    return {
+      v: sig.v,
+      r: sig.r,
+      s: sig.s
+    };
+  }
+
+  describe("Minimum Amount Boundary Tests", function () {
+    const MIN_AMOUNT = ethers.parseEther("0.1"); // 0.1 token
+    const BELOW_MIN_AMOUNT = ethers.parseEther("0.099999999999999999"); // Just below 0.1
+    const ABOVE_MIN_AMOUNT = ethers.parseEther("0.100000000000000001"); // Just above 0.1
+
+    describe("Lock Minimum Amount Tests", function () {
+      it("Should allow lock with exact minimum amount (0.1 token)", async function () {
+        await xpassToken.connect(user1).approve(
+          await kaiaBridge.getAddress(),
+          MIN_AMOUNT
+        );
+
+        await expect(
+          kaiaBridge.connect(user1).lockTokens(MIN_AMOUNT, user2.address)
+        ).to.emit(kaiaBridge, "TokensLocked");
+      });
+
+      it("Should prevent lock with amount below minimum (0.1 token)", async function () {
+        await xpassToken.connect(user1).approve(
+          await kaiaBridge.getAddress(),
+          BELOW_MIN_AMOUNT
+        );
+
+        await expect(
+          kaiaBridge.connect(user1).lockTokens(BELOW_MIN_AMOUNT, user2.address)
+        ).to.be.revertedWith("XPassKaiaBridge: amount below minimum");
+      });
+
+      it("Should allow lock with amount above minimum (0.1 token)", async function () {
+        await xpassToken.connect(user1).approve(
+          await kaiaBridge.getAddress(),
+          ABOVE_MIN_AMOUNT
+        );
+
+        await expect(
+          kaiaBridge.connect(user1).lockTokens(ABOVE_MIN_AMOUNT, user2.address)
+        ).to.emit(kaiaBridge, "TokensLocked");
+      });
+
+      it("Should prevent lockTokensWithPermit with amount below minimum", async function () {
+        const deadline = Math.floor(Date.now() / 1000) + PERMIT_DEADLINE_OFFSET;
+        const sig = await generatePermitSignature(
+          user1,
+          await kaiaBridge.getAddress(),
+          BELOW_MIN_AMOUNT,
+          deadline,
+          xpassToken
+        );
+
+        await expect(
+          kaiaBridge.connect(user1).lockTokensWithPermit(
+            BELOW_MIN_AMOUNT,
+            user2.address,
+            deadline,
+            sig.v,
+            sig.r,
+            sig.s
+          )
+        ).to.be.revertedWith("XPassKaiaBridge: amount below minimum");
+      });
+
+      it("Should allow lockTokensWithPermit with exact minimum amount", async function () {
+        const deadline = Math.floor(Date.now() / 1000) + PERMIT_DEADLINE_OFFSET;
+        const sig = await generatePermitSignature(
+          user1,
+          await kaiaBridge.getAddress(),
+          MIN_AMOUNT,
+          deadline,
+          xpassToken
+        );
+
+        await expect(
+          kaiaBridge.connect(user1).lockTokensWithPermit(
+            MIN_AMOUNT,
+            user2.address,
+            deadline,
+            sig.v,
+            sig.r,
+            sig.s
+          )
+        ).to.emit(kaiaBridge, "TokensLocked");
+      });
+    });
+
+    describe("Mint Minimum Amount Tests", function () {
+      it("Should allow mint with exact minimum amount (0.1 token)", async function () {
+        const lockId = generateLockId();
+        await expect(
+          xpassTokenBSC.connect(relayer).mint(user1.address, MIN_AMOUNT, lockId)
+        ).to.emit(xpassTokenBSC, "TokensMinted")
+          .withArgs(user1.address, MIN_AMOUNT, relayer.address, lockId);
+
+        expect(await xpassTokenBSC.balanceOf(user1.address)).to.equal(MIN_AMOUNT);
+      });
+
+      it("Should prevent mint with amount below minimum (0.1 token)", async function () {
+        const lockId = generateLockId();
+        await expect(
+          xpassTokenBSC.connect(relayer).mint(user1.address, BELOW_MIN_AMOUNT, lockId)
+        ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
+      });
+
+      it("Should allow mint with amount above minimum (0.1 token)", async function () {
+        const lockId = generateLockId();
+        await expect(
+          xpassTokenBSC.connect(relayer).mint(user1.address, ABOVE_MIN_AMOUNT, lockId)
+        ).to.emit(xpassTokenBSC, "TokensMinted")
+          .withArgs(user1.address, ABOVE_MIN_AMOUNT, relayer.address, lockId);
+
+        expect(await xpassTokenBSC.balanceOf(user1.address)).to.equal(ABOVE_MIN_AMOUNT);
+      });
+    });
+
+    describe("Burn Minimum Amount Tests", function () {
+      beforeEach(async function () {
+        // Mint tokens for burning tests
+        const mintAmount = ethers.parseEther("10");
+        const lockId = generateLockId();
+        await xpassTokenBSC.connect(relayer).mint(user1.address, mintAmount, lockId);
+      });
+
+      it("Should allow burnToKaia with exact minimum amount (0.1 token)", async function () {
+        await expect(
+          xpassTokenBSC.connect(user1).burnToKaia(user2.address, MIN_AMOUNT)
+        )
+          .to.emit(xpassTokenBSC, "TokensBurned")
+          .withArgs(user1.address, MIN_AMOUNT, user2.address);
+
+        expect(await xpassTokenBSC.balanceOf(user1.address)).to.equal(
+          ethers.parseEther("10") - MIN_AMOUNT
+        );
+      });
+
+      it("Should prevent burnToKaia with amount below minimum (0.1 token)", async function () {
+        await expect(
+          xpassTokenBSC.connect(user1).burnToKaia(user2.address, BELOW_MIN_AMOUNT)
+        ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
+      });
+
+      it("Should allow burnToKaia with amount above minimum (0.1 token)", async function () {
+        await expect(
+          xpassTokenBSC.connect(user1).burnToKaia(user2.address, ABOVE_MIN_AMOUNT)
+        )
+          .to.emit(xpassTokenBSC, "TokensBurned")
+          .withArgs(user1.address, ABOVE_MIN_AMOUNT, user2.address);
+
+        expect(await xpassTokenBSC.balanceOf(user1.address)).to.equal(
+          ethers.parseEther("10") - ABOVE_MIN_AMOUNT
+        );
+      });
+
+      it("Should allow burnFromToKaia with exact minimum amount (0.1 token)", async function () {
+        await xpassTokenBSC.connect(user1).approve(user2.address, MIN_AMOUNT);
+
+        await expect(
+          xpassTokenBSC.connect(user2).burnFromToKaia(user1.address, addrs[0].address, MIN_AMOUNT)
+        )
+          .to.emit(xpassTokenBSC, "TokensBurned")
+          .withArgs(user1.address, MIN_AMOUNT, addrs[0].address);
+
+        expect(await xpassTokenBSC.balanceOf(user1.address)).to.equal(
+          ethers.parseEther("10") - MIN_AMOUNT
+        );
+      });
+
+      it("Should prevent burnFromToKaia with amount below minimum (0.1 token)", async function () {
+        await xpassTokenBSC.connect(user1).approve(user2.address, BELOW_MIN_AMOUNT);
+
+        await expect(
+          xpassTokenBSC.connect(user2).burnFromToKaia(user1.address, addrs[0].address, BELOW_MIN_AMOUNT)
+        ).to.be.revertedWith("XPassTokenBSC: amount below minimum");
+      });
+
+      it("Should allow burnFromToKaia with amount above minimum (0.1 token)", async function () {
+        await xpassTokenBSC.connect(user1).approve(user2.address, ABOVE_MIN_AMOUNT);
+
+        await expect(
+          xpassTokenBSC.connect(user2).burnFromToKaia(user1.address, addrs[0].address, ABOVE_MIN_AMOUNT)
+        )
+          .to.emit(xpassTokenBSC, "TokensBurned")
+          .withArgs(user1.address, ABOVE_MIN_AMOUNT, addrs[0].address);
+
+        expect(await xpassTokenBSC.balanceOf(user1.address)).to.equal(
+          ethers.parseEther("10") - ABOVE_MIN_AMOUNT
+        );
+      });
+    });
+
+    describe("Unlock Minimum Amount Tests", function () {
+      beforeEach(async function () {
+        // Setup: Lock and mint tokens for unlock tests
+        await xpassToken.connect(user1).approve(
+          await kaiaBridge.getAddress(),
+          LOCK_AMOUNT
+        );
+        await kaiaBridge.connect(user1).lockTokens(LOCK_AMOUNT, user2.address);
+        const lockId = generateLockId();
+      await xpassTokenBSC.connect(relayer).mint(user2.address, LOCK_AMOUNT, lockId);
+      });
+
+      it("Should allow unlock with exact minimum amount (0.1 token)", async function () {
+        // Get initial balance
+        const initialBalance = await xpassToken.balanceOf(user2.address);
+        
+        // Burn tokens on BSC
+        const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, MIN_AMOUNT);
+        const burnReceipt = await burnTx.wait();
+        const burnTxHash = burnReceipt.hash;
+
+        // Unlock on Kaia
+        await expect(
+          kaiaBridge.connect(relayer).unlockTokens(
+            user2.address,
+            MIN_AMOUNT,
+            burnTxHash
+          )
+        ).to.emit(kaiaBridge, "TokensUnlocked");
+
+        expect(await xpassToken.balanceOf(user2.address)).to.equal(initialBalance + MIN_AMOUNT);
+      });
+
+      it("Should prevent unlock with amount below minimum (0.1 token)", async function () {
+        // Burn tokens on BSC with MIN_AMOUNT (burnToKaia requires minimum amount)
+        const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, MIN_AMOUNT);
+        const burnReceipt = await burnTx.wait();
+        const burnTxHash = burnReceipt.hash;
+
+        // Try to unlock with amount below minimum - should fail
+        // This tests that unlockTokens itself checks for minimum amount
+        await expect(
+          kaiaBridge.connect(relayer).unlockTokens(
+            user2.address,
+            BELOW_MIN_AMOUNT,
+            burnTxHash
+          )
+        ).to.be.revertedWith("XPassKaiaBridge: amount below minimum");
+      });
+
+      it("Should allow unlock with amount above minimum (0.1 token)", async function () {
+        // Get initial balance
+        const initialBalance = await xpassToken.balanceOf(user2.address);
+        
+        // Burn tokens on BSC
+        const burnTx = await xpassTokenBSC.connect(user2).burnToKaia(user2.address, ABOVE_MIN_AMOUNT);
+        const burnReceipt = await burnTx.wait();
+        const burnTxHash = burnReceipt.hash;
+
+        // Unlock on Kaia
+        await expect(
+          kaiaBridge.connect(relayer).unlockTokens(
+            user2.address,
+            ABOVE_MIN_AMOUNT,
+            burnTxHash
+          )
+        ).to.emit(kaiaBridge, "TokensUnlocked");
+
+        expect(await xpassToken.balanceOf(user2.address)).to.equal(initialBalance + ABOVE_MIN_AMOUNT);
+      });
+    });
+
+    describe("Batch Unlock Minimum Amount Tests", function () {
+      beforeEach(async function () {
+        // Setup: Multiple locks and mints
+        const amounts = [
+          ethers.parseEther("10"),
+          ethers.parseEther("20"),
+          ethers.parseEther("30")
+        ];
+
+        for (let i = 0; i < amounts.length; i++) {
+          await xpassToken.connect(user1).approve(
+            await kaiaBridge.getAddress(),
+            amounts[i]
+          );
+          await kaiaBridge.connect(user1).lockTokens(amounts[i], addrs[i].address);
+          const lockId = generateLockId();
+        await xpassTokenBSC.connect(relayer).mint(addrs[i].address, amounts[i], lockId);
+        }
+      });
+
+      it("Should allow batch unlock with all amounts at exact minimum (0.1 token)", async function () {
+        const recipients = addrs.slice(0, 3).map(addr => addr.address);
+        const amounts = [MIN_AMOUNT, MIN_AMOUNT, MIN_AMOUNT];
+        const burnTxHashes = [];
+
+        // Burn tokens for each recipient
+        for (let i = 0; i < recipients.length; i++) {
+          const burnTx = await xpassTokenBSC.connect(addrs[i]).burnToKaia(addrs[i].address, amounts[i]);
+          const burnReceipt = await burnTx.wait();
+          burnTxHashes.push(burnReceipt.hash);
+        }
+
+        // Batch unlock
+        await expect(
+          kaiaBridge.connect(relayer).batchUnlockTokens(
+            recipients,
+            amounts,
+            burnTxHashes
+          )
+        ).to.emit(kaiaBridge, "TokensUnlocked");
+
+        // Verify all unlocks succeeded
+        for (let i = 0; i < recipients.length; i++) {
+          expect(await xpassToken.balanceOf(recipients[i])).to.equal(amounts[i]);
+        }
+      });
+
+      it("Should prevent batch unlock with any amount below minimum", async function () {
+        const recipients = [addrs[0].address, addrs[1].address, addrs[2].address];
+        const burnAmounts = [MIN_AMOUNT, MIN_AMOUNT, MIN_AMOUNT]; // All use MIN_AMOUNT for burnToKaia
+        const unlockAmounts = [MIN_AMOUNT, BELOW_MIN_AMOUNT, MIN_AMOUNT]; // One below minimum for unlock
+        const burnTxHashes = [];
+
+        // Burn tokens for each recipient (all with MIN_AMOUNT since burnToKaia requires minimum)
+        for (let i = 0; i < recipients.length; i++) {
+          const burnTx = await xpassTokenBSC.connect(addrs[i]).burnToKaia(addrs[i].address, burnAmounts[i]);
+          const burnReceipt = await burnTx.wait();
+          burnTxHashes.push(burnReceipt.hash);
+        }
+
+        // Batch unlock should fail because one amount is below minimum
+        // This tests that batchUnlockTokens itself checks for minimum amount
+        await expect(
+          kaiaBridge.connect(relayer).batchUnlockTokens(
+            recipients,
+            unlockAmounts,
+            burnTxHashes
+          )
+        ).to.be.revertedWith("XPassKaiaBridge: amount below minimum");
+      });
+
+      it("Should allow batch unlock with all amounts above minimum", async function () {
+        const recipients = addrs.slice(0, 3).map(addr => addr.address);
+        const amounts = [ABOVE_MIN_AMOUNT, ABOVE_MIN_AMOUNT, ABOVE_MIN_AMOUNT];
+        const burnTxHashes = [];
+
+        // Burn tokens for each recipient
+        for (let i = 0; i < recipients.length; i++) {
+          const burnTx = await xpassTokenBSC.connect(addrs[i]).burnToKaia(addrs[i].address, amounts[i]);
+          const burnReceipt = await burnTx.wait();
+          burnTxHashes.push(burnReceipt.hash);
+        }
+
+        // Batch unlock
+        await expect(
+          kaiaBridge.connect(relayer).batchUnlockTokens(
+            recipients,
+            amounts,
+            burnTxHashes
+          )
+        ).to.emit(kaiaBridge, "TokensUnlocked");
+
+        // Verify all unlocks succeeded
+        for (let i = 0; i < recipients.length; i++) {
+          expect(await xpassToken.balanceOf(recipients[i])).to.equal(amounts[i]);
+        }
+      });
+    });
+
+    describe("Edge Cases for Minimum Amount", function () {
+      it("Should handle multiple operations at minimum amount", async function () {
+        // Lock at minimum
+        await xpassToken.connect(user1).approve(
+          await kaiaBridge.getAddress(),
+          MIN_AMOUNT * 3n
+        );
+        await kaiaBridge.connect(user1).lockTokens(MIN_AMOUNT, user2.address);
+        await kaiaBridge.connect(user1).lockTokens(MIN_AMOUNT, user2.address);
+        await kaiaBridge.connect(user1).lockTokens(MIN_AMOUNT, user2.address);
+
+        // Mint at minimum
+        const lockId1 = generateLockId();
+        const lockId2 = generateLockId();
+        const lockId3 = generateLockId();
+        await xpassTokenBSC.connect(relayer).mint(user2.address, MIN_AMOUNT, lockId1);
+        await xpassTokenBSC.connect(relayer).mint(user2.address, MIN_AMOUNT, lockId2);
+        await xpassTokenBSC.connect(relayer).mint(user2.address, MIN_AMOUNT, lockId3);
+
+        expect(await xpassTokenBSC.balanceOf(user2.address)).to.equal(MIN_AMOUNT * 3n);
+
+        // Burn at minimum
+        await xpassTokenBSC.connect(user2).burnToKaia(addrs[0].address, MIN_AMOUNT);
+        await xpassTokenBSC.connect(user2).burnToKaia(addrs[0].address, MIN_AMOUNT);
+        await xpassTokenBSC.connect(user2).burnToKaia(addrs[0].address, MIN_AMOUNT);
+
+        expect(await xpassTokenBSC.balanceOf(user2.address)).to.equal(0);
+      });
+
+      it("Should verify MIN_AMOUNT constant matches contract value", async function () {
+        // Get minLockUnlockAmount from contract and verify it matches MIN_AMOUNT
+        const minLockUnlockAmount = await kaiaBridge.minLockUnlockAmount();
+        expect(minLockUnlockAmount).to.equal(MIN_AMOUNT);
+
+        // Verify through successful lock at minimum
+        await xpassToken.connect(user1).approve(
+          await kaiaBridge.getAddress(),
+          MIN_AMOUNT
+        );
+        await expect(
+          kaiaBridge.connect(user1).lockTokens(MIN_AMOUNT, user2.address)
+        ).to.not.be.reverted;
+      });
     });
   });
 });

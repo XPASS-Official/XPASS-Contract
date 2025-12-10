@@ -89,6 +89,58 @@ contract XPassTimelockController is TimelockController {
     }
     
     /**
+     * @dev Creates a proposal to grant minter role to an address in XPassTokenBSC
+     * @param xpassTokenBSC XPassTokenBSC contract address
+     * @param account Address to grant minter role to
+     * @return proposalId Generated proposal ID
+     */
+    function proposeGrantMinterRole(address xpassTokenBSC, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
+        bytes memory data = abi.encodeWithSignature("grantMinterRole(address)", account);
+        bytes32 salt = _nextSalt(bytes4(keccak256("GRANT_MINTER")));
+        proposalId = this.hashOperation(xpassTokenBSC, 0, data, bytes32(0), salt);
+        this.schedule(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
+    }
+    
+    /**
+     * @dev Creates a proposal to revoke minter role from an address in XPassTokenBSC
+     * @param xpassTokenBSC XPassTokenBSC contract address
+     * @param account Address to revoke minter role from
+     * @return proposalId Generated proposal ID
+     */
+    function proposeRevokeMinterRole(address xpassTokenBSC, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
+        bytes memory data = abi.encodeWithSignature("revokeMinterRole(address)", account);
+        bytes32 salt = _nextSalt(bytes4(keccak256("REVOKE_MINTER")));
+        proposalId = this.hashOperation(xpassTokenBSC, 0, data, bytes32(0), salt);
+        this.schedule(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
+    }
+    
+    /**
+     * @dev Creates a proposal to grant unlocker role to an address in XPassKaiaBridge
+     * @param kaiaBridge XPassKaiaBridge contract address
+     * @param account Address to grant unlocker role to
+     * @return proposalId Generated proposal ID
+     */
+    function proposeGrantUnlockerRole(address kaiaBridge, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
+        bytes memory data = abi.encodeWithSignature("grantUnlockerRole(address)", account);
+        bytes32 salt = _nextSalt(bytes4(keccak256("GRANT_UNLOCKER")));
+        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
+        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+    }
+    
+    /**
+     * @dev Creates a proposal to revoke unlocker role from an address in XPassKaiaBridge
+     * @param kaiaBridge XPassKaiaBridge contract address
+     * @param account Address to revoke unlocker role from
+     * @return proposalId Generated proposal ID
+     */
+    function proposeRevokeUnlockerRole(address kaiaBridge, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
+        bytes memory data = abi.encodeWithSignature("revokeUnlockerRole(address)", account);
+        bytes32 salt = _nextSalt(bytes4(keccak256("REVOKE_UNLOCKER")));
+        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
+        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+    }
+    
+    /**
      * @dev Returns the current delay time
      * @return Currently set minimum delay time (in seconds)
      */
