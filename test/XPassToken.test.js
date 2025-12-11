@@ -1838,7 +1838,7 @@ describe("XPassToken", function () {
       // This test is designed to cover the proposeUnpause function
       // Even though it will fail due to role requirements, it will execute the function
       await expect(
-        timelockController.proposeUnpause(await xpassToken.getAddress())
+        timelockController.connect(addr1).proposeUnpause(await xpassToken.getAddress())
       ).to.be.reverted;
     });
 
@@ -1846,7 +1846,7 @@ describe("XPassToken", function () {
       // This test is designed to cover the proposePause function
       // Even though it will fail due to role requirements, it will execute the function
       await expect(
-        timelockController.proposePause(await xpassToken.getAddress())
+        timelockController.connect(addr1).proposePause(await xpassToken.getAddress())
       ).to.be.reverted;
     });
   });

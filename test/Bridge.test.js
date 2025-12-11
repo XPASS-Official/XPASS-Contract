@@ -1685,7 +1685,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       // This test is designed to cover the proposeGrantUnlockerRole function
       // Even though it will fail due to role requirements, it will execute the function
       await expect(
-        timelockController.proposeGrantUnlockerRole(
+        timelockController.connect(user1).proposeGrantUnlockerRole(
           await kaiaBridge.getAddress(),
           user2.address
         )
@@ -1696,7 +1696,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       // This test is designed to cover the proposeRevokeUnlockerRole function
       // Even though it will fail due to role requirements, it will execute the function
       await expect(
-        timelockController.proposeRevokeUnlockerRole(
+        timelockController.connect(user1).proposeRevokeUnlockerRole(
           await kaiaBridge.getAddress(),
           relayer.address
         )
@@ -1739,7 +1739,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       // Even though it will fail due to role requirements, it will execute the function
       const newAddress = addrs[0].address;
       await expect(
-        timelockController.proposeUpdateBscTokenAddress(
+        timelockController.connect(user1).proposeUpdateBscTokenAddress(
           await kaiaBridge.getAddress(),
           newAddress
         )
@@ -1780,7 +1780,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       // Even though it will fail due to role requirements, it will execute the function
       const newChainId = 56; // BSC Mainnet
       await expect(
-        timelockController.proposeUpdateBscChainId(
+        timelockController.connect(user1).proposeUpdateBscChainId(
           await kaiaBridge.getAddress(),
           newChainId
         )
@@ -1821,7 +1821,7 @@ describe("Bridge Lock-and-Mint Tests", function () {
       // Even though it will fail due to role requirements, it will execute the function
       const newAmount = ethers.parseEther("0.2");
       await expect(
-        timelockController.proposeUpdateMinLockUnlockAmount(
+        timelockController.connect(user1).proposeUpdateMinLockUnlockAmount(
           await kaiaBridge.getAddress(),
           newAmount
         )

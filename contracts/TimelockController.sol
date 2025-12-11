@@ -52,6 +52,59 @@ contract XPassTimelockController is TimelockController {
     // --------------------------------------------------------------------
     
     /**
+     * @dev Internal helper to hash operation with bytes memory
+     * This allows internal calls without type conversion issues
+     */
+    function _hashOperationMemory(
+        address target,
+        uint256 value,
+        bytes memory data,
+        bytes32 predecessor,
+        bytes32 salt
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encode(target, value, data, predecessor, salt));
+    }
+    
+    /**
+     * @dev Internal helper to schedule with bytes memory
+     * This allows internal calls without requiring the contract itself to have PROPOSER_ROLE
+     */
+    function _scheduleMemory(
+        address target,
+        uint256 value,
+        bytes memory data,
+        bytes32 predecessor,
+        bytes32 salt,
+        uint256 delay
+    ) internal {
+        bytes32 id = _hashOperationMemory(target, value, data, predecessor, salt);
+        
+        // Replicate _schedule() logic since it's private in parent
+        if (isOperation(id)) {
+            revert TimelockUnexpectedOperationState(id, _encodeStateBitmap(OperationState.Unset));
+        }
+        uint256 minDelay = getMinDelay();
+        if (delay < minDelay) {
+            revert TimelockInsufficientDelay(delay, minDelay);
+        }
+        
+        // Set _timestamps[id] = block.timestamp + delay using assembly
+        // _timestamps is the first state variable (slot 0) in parent contract
+        assembly {
+            mstore(0x00, id)
+            mstore(0x20, 0) // slot 0 for _timestamps mapping
+            let slot := keccak256(0x00, 0x40)
+            let ts := add(timestamp(), delay)
+            sstore(slot, ts)
+        }
+        
+        emit CallScheduled(id, 0, target, value, data, predecessor, delay);
+        if (salt != bytes32(0)) {
+            emit CallSalt(id, salt);
+        }
+    }
+    
+    /**
      * @dev Creates a proposal to call pause function
      * @param xpassToken Token contract address (XPassToken or XPassTokenBSC)
      * @return proposalId Generated proposal ID
@@ -59,8 +112,8 @@ contract XPassTimelockController is TimelockController {
     function proposePause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("pause()");
         bytes32 salt = _nextSalt(bytes4(keccak256("PAUSE")));
-        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), salt);
-        this.schedule(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(xpassToken, 0, data, bytes32(0), salt);
+        _scheduleMemory(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -71,8 +124,8 @@ contract XPassTimelockController is TimelockController {
     function proposeUnpause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("unpause()");
         bytes32 salt = _nextSalt(bytes4(keccak256("UNPAUSE")));
-        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), salt);
-        this.schedule(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(xpassToken, 0, data, bytes32(0), salt);
+        _scheduleMemory(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -84,8 +137,8 @@ contract XPassTimelockController is TimelockController {
     function proposeGrantMinterRole(address xpassTokenBSC, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("grantMinterRole(address)", account);
         bytes32 salt = _nextSalt(bytes4(keccak256("GRANT_MINTER")));
-        proposalId = this.hashOperation(xpassTokenBSC, 0, data, bytes32(0), salt);
-        this.schedule(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(xpassTokenBSC, 0, data, bytes32(0), salt);
+        _scheduleMemory(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -97,8 +150,8 @@ contract XPassTimelockController is TimelockController {
     function proposeRevokeMinterRole(address xpassTokenBSC, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("revokeMinterRole(address)", account);
         bytes32 salt = _nextSalt(bytes4(keccak256("REVOKE_MINTER")));
-        proposalId = this.hashOperation(xpassTokenBSC, 0, data, bytes32(0), salt);
-        this.schedule(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(xpassTokenBSC, 0, data, bytes32(0), salt);
+        _scheduleMemory(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -110,8 +163,8 @@ contract XPassTimelockController is TimelockController {
     function proposeGrantUnlockerRole(address kaiaBridge, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("grantUnlockerRole(address)", account);
         bytes32 salt = _nextSalt(bytes4(keccak256("GRANT_UNLOCKER")));
-        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
-        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
+        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -123,8 +176,8 @@ contract XPassTimelockController is TimelockController {
     function proposeRevokeUnlockerRole(address kaiaBridge, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("revokeUnlockerRole(address)", account);
         bytes32 salt = _nextSalt(bytes4(keccak256("REVOKE_UNLOCKER")));
-        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
-        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
+        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -136,8 +189,8 @@ contract XPassTimelockController is TimelockController {
     function proposeUpdateBscTokenAddress(address kaiaBridge, address newBscTokenAddress) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("updateBscTokenAddress(address)", newBscTokenAddress);
         bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_BSC_TOKEN")));
-        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
-        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
+        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -149,8 +202,8 @@ contract XPassTimelockController is TimelockController {
     function proposeUpdateBscChainId(address kaiaBridge, uint256 newBscChainId) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("updateBscChainId(uint256)", newBscChainId);
         bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_BSC_CHAIN")));
-        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
-        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
+        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -162,8 +215,8 @@ contract XPassTimelockController is TimelockController {
     function proposeUpdateMinLockUnlockAmount(address kaiaBridge, uint256 newMinLockUnlockAmount) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("updateMinLockUnlockAmount(uint256)", newMinLockUnlockAmount);
         bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_MIN_LOCK")));
-        proposalId = this.hashOperation(kaiaBridge, 0, data, bytes32(0), salt);
-        this.schedule(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
+        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -175,8 +228,8 @@ contract XPassTimelockController is TimelockController {
     function proposeUpdateMinMintBurnAmount(address xpassTokenBSC, uint256 newMinMintBurnAmount) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("updateMinMintBurnAmount(uint256)", newMinMintBurnAmount);
         bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_MIN_MINT")));
-        proposalId = this.hashOperation(xpassTokenBSC, 0, data, bytes32(0), salt);
-        this.schedule(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = _hashOperationMemory(xpassTokenBSC, 0, data, bytes32(0), salt);
+        _scheduleMemory(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**

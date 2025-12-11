@@ -1450,7 +1450,7 @@ describe("XPassTokenBSC", function () {
       // This test is designed to cover the proposeGrantMinterRole function
       // Even though it will fail due to role requirements, it will execute the function
       await expect(
-        timelockController.proposeGrantMinterRole(
+        timelockController.connect(addr1).proposeGrantMinterRole(
           await xpassTokenBSC.getAddress(),
           addr2.address
         )
@@ -1461,7 +1461,7 @@ describe("XPassTokenBSC", function () {
       // This test is designed to cover the proposeRevokeMinterRole function
       // Even though it will fail due to role requirements, it will execute the function
       await expect(
-        timelockController.proposeRevokeMinterRole(
+        timelockController.connect(addr1).proposeRevokeMinterRole(
           await xpassTokenBSC.getAddress(),
           minter.address
         )
@@ -1504,7 +1504,7 @@ describe("XPassTokenBSC", function () {
       // Even though it will fail due to role requirements, it will execute the function
       const newAmount = ethers.parseEther("0.2");
       await expect(
-        timelockController.proposeUpdateMinMintBurnAmount(
+        timelockController.connect(addr1).proposeUpdateMinMintBurnAmount(
           await xpassTokenBSC.getAddress(),
           newAmount
         )
