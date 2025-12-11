@@ -442,15 +442,6 @@ describe("XPassToken", function () {
       ).to.not.be.reverted;
     });
 
-    it("Non-proposer should not be able to propose ownership transfer", async function () {
-      await expect(
-        timelockController.connect(addr1).proposeOwnershipTransferTo(
-          await xpassToken.getAddress(),
-          addr2.address
-        )
-      ).to.be.reverted;
-    });
-
     it("Should be able to propose pause through TimelockController", async function () {
       // Grant PROPOSER_ROLE to addr1 for this test
       const PROPOSER_ROLE = await timelockController.PROPOSER_ROLE();
@@ -511,34 +502,6 @@ describe("XPassToken", function () {
   });
 
   describe("Ownership Edge Cases", function () {
-    it("Should not be able to propose ownership transfer to zero address", async function () {
-      await expect(
-        timelockController.proposeOwnershipTransferTo(
-          await xpassToken.getAddress(),
-          ethers.ZeroAddress
-        )
-      ).to.be.reverted;
-    });
-
-    it("Should be able to propose ownership transfer to current owner", async function () {
-      // Grant PROPOSER_ROLE to addr1 for this test
-      const PROPOSER_ROLE = await timelockController.PROPOSER_ROLE();
-      await timelockController.grantRole(PROPOSER_ROLE, addr1.address);
-      
-      // addr1 should be able to propose ownership transfer to current owner (TimelockController)
-      const transferData = xpassToken.interface.encodeFunctionData("transferOwnership", [await timelockController.getAddress()]);
-      await expect(
-        timelockController.connect(addr1).schedule(
-          await xpassToken.getAddress(),
-          0,
-          transferData,
-          ethers.ZeroHash,
-          ethers.ZeroHash,
-          PRODUCTION_DELAY // 48 hours delay
-        )
-      ).to.not.be.reverted;
-    });
-
     it("When paused, only token transfer should be blocked, management functions should work", async function () {
       // First pause the contract
       const pauseData = xpassToken.interface.encodeFunctionData("pause");
@@ -666,14 +629,6 @@ describe("XPassToken", function () {
       // Cannot propose unpause
       await expect(
         timelockController.connect(addr1).proposeUnpause(await xpassToken.getAddress())
-      ).to.be.reverted;
-      
-      // Cannot propose ownership transfer
-      await expect(
-        timelockController.connect(addr1).proposeOwnershipTransferTo(
-          await xpassToken.getAddress(),
-          addr2.address
-        )
       ).to.be.reverted;
     });
   });
@@ -1073,24 +1028,6 @@ describe("XPassToken", function () {
     });
 
     describe("Ownership Transfer Error Cases", function () {
-      it("Should revert ownership transfer to zero address", async function () {
-        await expect(
-          timelockController.proposeOwnershipTransferTo(
-            await xpassToken.getAddress(),
-            ethers.ZeroAddress
-          )
-        ).to.be.reverted;
-      });
-
-      it("Should revert ownership transfer from non-proposer", async function () {
-        await expect(
-          timelockController.connect(addr1).proposeOwnershipTransferTo(
-            await xpassToken.getAddress(),
-            addr2.address
-          )
-        ).to.be.reverted;
-      });
-
       it("Should handle ownership transfer to same address", async function () {
         // Transfer ownership to the same address (owner)
         await expect(
@@ -1905,17 +1842,6 @@ describe("XPassToken", function () {
       ).to.be.reverted;
     });
 
-    it("Should test proposeOwnershipTransferTo function coverage", async function () {
-      // This test is designed to cover the proposeOwnershipTransferTo function
-      // Even though it will fail due to role requirements, it will execute the function
-      await expect(
-        timelockController.proposeOwnershipTransferTo(
-          await xpassToken.getAddress(),
-          addr1.address
-        )
-      ).to.be.reverted;
-    });
-
     it("Should test proposePause function coverage", async function () {
       // This test is designed to cover the proposePause function
       // Even though it will fail due to role requirements, it will execute the function
@@ -2417,7 +2343,6 @@ describe("XPassToken", function () {
 
     const SELECTOR_PAUSE = "0x8456cb59";
     const SELECTOR_UNPAUSE = "0x3f4ba83a";
-    const SELECTOR_TRANSFER_OWNERSHIP = "0xf2fde38b";
 
     function findCallScheduled(receipt, iface, timelockAddress) {
       for (const log of receipt.logs) {
@@ -2499,23 +2424,6 @@ describe("XPassToken", function () {
       expect(delay).to.equal(minDelayRead);
     });
 
-    it("proposeOwnershipTransferTo: selector == transferOwnership(address), 두 번 호출하면 id 다름", async function () {
-      const tlAddr = await timelock.getAddress();
-      const tokenAddr = await xpass.getAddress();
-      const newOwner = (await ethers.getSigners())[3].address;
-
-      const rc1 = await (await timelock.connect(admin).proposeOwnershipTransferTo(tokenAddr, newOwner)).wait();
-      const p1 = findCallScheduled(rc1, timelock.interface, tlAddr);
-      expect(p1, "CallScheduled(1) not found").to.not.be.undefined;
-      expect(p1.args.data.slice(0, 10)).to.equal(SELECTOR_TRANSFER_OWNERSHIP);
-
-      const rc2 = await (await timelock.connect(admin).proposeOwnershipTransferTo(tokenAddr, newOwner)).wait();
-      const p2 = findCallScheduled(rc2, timelock.interface, tlAddr);
-      expect(p2, "CallScheduled(2) not found").to.not.be.undefined;
-
-      expect(p2.args.id).to.not.equal(p1.args.id);
-    });
-
     it("Function selector constants validation", async function () {
       const tokenAddr = await xpass.getAddress();
       const tlAddr = await timelock.getAddress();
@@ -2534,17 +2442,9 @@ describe("XPassToken", function () {
       expect(unpauseParsed.args.data.slice(0, 10)).to.equal(SELECTOR_UNPAUSE);
       expect(unpauseParsed.args.data.slice(0, 10)).to.equal("0x3f4ba83a");
 
-      // transferOwnership(address) selector 검증
-      const transferTx = await timelock.connect(admin).proposeOwnershipTransferTo(tokenAddr, other.address);
-      const transferRc = await transferTx.wait();
-      const transferParsed = findCallScheduled(transferRc, timelock.interface, tlAddr);
-      expect(transferParsed.args.data.slice(0, 10)).to.equal(SELECTOR_TRANSFER_OWNERSHIP);
-      expect(transferParsed.args.data.slice(0, 10)).to.equal("0xf2fde38b");
-
       // 상수 값들이 올바른지 검증
       expect(SELECTOR_PAUSE).to.equal("0x8456cb59");
       expect(SELECTOR_UNPAUSE).to.equal("0x3f4ba83a");
-      expect(SELECTOR_TRANSFER_OWNERSHIP).to.equal("0xf2fde38b");
     });
   });
 });

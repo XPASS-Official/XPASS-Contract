@@ -76,19 +76,6 @@ contract XPassTimelockController is TimelockController {
     }
     
     /**
-     * @dev Creates a proposal to transfer XPassToken's ownership to another address
-     * @param xpassToken XPassToken contract address
-     * @param newOwner New owner address
-     * @return proposalId Generated proposal ID
-     */
-    function proposeOwnershipTransferTo(address xpassToken, address newOwner) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
-        bytes memory data = abi.encodeWithSignature("transferOwnership(address)", newOwner);
-        bytes32 salt = _nextSalt(bytes4(keccak256("OWNERSHIP")));
-        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), salt);
-        this.schedule(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
-    }
-    
-    /**
      * @dev Creates a proposal to grant minter role to an address in XPassTokenBSC
      * @param xpassTokenBSC XPassTokenBSC contract address
      * @param account Address to grant minter role to

@@ -1103,15 +1103,6 @@ describe("XPassTokenBSC", function () {
       ).to.not.be.reverted;
     });
 
-    it("Non-proposer should not be able to propose ownership transfer", async function () {
-      await expect(
-        timelockController.connect(addr1).proposeOwnershipTransferTo(
-          await xpassTokenBSC.getAddress(),
-          addr2.address
-        )
-      ).to.be.reverted;
-    });
-
     it("Should be able to propose pause through TimelockController", async function () {
       // Grant PROPOSER_ROLE to addr1 for this test
       const PROPOSER_ROLE = await timelockController.PROPOSER_ROLE();
@@ -1884,24 +1875,6 @@ describe("XPassTokenBSC", function () {
     });
 
     describe("Ownership Transfer Error Cases", function () {
-      it("Should revert ownership transfer to zero address", async function () {
-        await expect(
-          timelockController.proposeOwnershipTransferTo(
-            await xpassTokenBSC.getAddress(),
-            ethers.ZeroAddress
-          )
-        ).to.be.reverted;
-      });
-
-      it("Should revert ownership transfer from non-proposer", async function () {
-        await expect(
-          timelockController.connect(addr1).proposeOwnershipTransferTo(
-            await xpassTokenBSC.getAddress(),
-            addr2.address
-          )
-        ).to.be.reverted;
-      });
-
       it("Should handle ownership transfer to same address", async function () {
         // Transfer ownership to the same address (owner)
         await expect(
