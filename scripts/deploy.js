@@ -6,7 +6,7 @@ async function main() {
   // Get deployer account
   const [deployer] = await ethers.getSigners();
   console.log("Deployer account:", deployer.address);
-  console.log("Account balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)), "ETH");
+  console.log("Account balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)), "BNB");
 
   // Step 1: Deploy TimelockController
   console.log("\n=== Step 1: Deploying TimelockController ===");
@@ -15,7 +15,7 @@ async function main() {
   // TimelockController parameters
   // Check if we're on mainnet - if so, force 48 hours for security
   const network = await ethers.provider.getNetwork();
-  const isMainnet = network.chainId === 8217n; // Kaia mainnet chain ID
+  const isMainnet = network.chainId === 56n; // BSC mainnet chain ID
   
   let minDelay;
   if (isMainnet) {

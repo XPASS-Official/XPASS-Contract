@@ -25,10 +25,12 @@ async function main() {
     
     console.log(deployOutput);
     
-    // Extract contract addresses from deployment output
+    // Extract contract addresses and delay from deployment output
     const timelockMatch = deployOutput.match(/TimelockController address: (0x[a-fA-F0-9]+)/);
     const tokenMatch = deployOutput.match(/XPassToken address: (0x[a-fA-F0-9]+)/);
     const multisigMatch = deployOutput.match(/XPassToken owner: (0x[a-fA-F0-9]+)/);
+    // Extract delay value from "Min Delay: X seconds" or "To verify TimelockController:" output
+    const delayMatch = deployOutput.match(/Min Delay: (\d+) seconds/);
     
     if (!timelockMatch || !tokenMatch || !multisigMatch) {
       console.error("❌ Failed to extract contract addresses from deployment output");
@@ -38,6 +40,7 @@ async function main() {
     const timelockAddress = timelockMatch[1];
     const tokenAddress = tokenMatch[1];
     const multisigAddress = multisigMatch[1];
+    const delay = delayMatch ? delayMatch[1] : "172800"; // Default to 48 hours if not found
     
     console.log(`\n📍 Extracted addresses:`);
     console.log(`   TimelockController: ${timelockAddress}`);
@@ -49,9 +52,10 @@ async function main() {
 
     // Verify TimelockController
     console.log("\n🔍 Verifying TimelockController...");
+    console.log(`   Using delay: ${delay} seconds`);
     try {
       const { stdout: timelockVerifyOutput, stderr: timelockVerifyError } = await execAsync(
-        `npx hardhat verify --network ${network} "${timelockAddress}" "172800" "${multisigAddress}"`
+        `npx hardhat verify --network ${network} "${timelockAddress}" "${delay}" "${multisigAddress}"`
       );
       
       if (timelockVerifyError) {
@@ -83,12 +87,12 @@ async function main() {
 
     // Display verification URLs
     console.log("\n🌐 Verification URLs:");
-    if (network === "testnet") {
-      console.log(`   TimelockController: https://kairos.kaiascan.io/address/${timelockAddress}`);
-      console.log(`   XPassToken: https://kairos.kaiascan.io/address/${tokenAddress}`);
-    } else if (network === "mainnet") {
-      console.log(`   TimelockController: https://kaiascan.io/address/${timelockAddress}`);
-      console.log(`   XPassToken: https://kaiascan.io/address/${tokenAddress}`);
+    if (network === "bscTestnet" || network === "testnet") {
+      console.log(`   TimelockController: https://testnet.bscscan.com/address/${timelockAddress}`);
+      console.log(`   XPassToken: https://testnet.bscscan.com/address/${tokenAddress}`);
+    } else if (network === "bscMainnet" || network === "mainnet") {
+      console.log(`   TimelockController: https://bscscan.com/address/${timelockAddress}`);
+      console.log(`   XPassToken: https://bscscan.com/address/${tokenAddress}`);
     } else {
       console.log(`   TimelockController: ${timelockAddress}`);
       console.log(`   XPassToken: ${tokenAddress}`);

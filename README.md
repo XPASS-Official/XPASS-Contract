@@ -1,14 +1,14 @@
-# XPASS Token - KIP-7 Based ERC20 Token
+# XPASS Token - BEP20/ERC20 Token
 
-A KIP-7 standard compliant ERC20 token contract running on the Kaia network.
+A BEP20/ERC20 standard compliant token contract running on the Binance Smart Chain (BSC).
 
 ## 🚀 Project Overview
 
-XPassToken is a multi-functional token that can be used in the Kaia ecosystem, built on OpenZeppelin's verified contract library.
+XPassToken is a multi-functional token that can be used in the BSC ecosystem, built on OpenZeppelin's verified contract library.
 
 ## 📋 Key Features
 
-### **Basic KIP-7 Functions**
+### **Basic BEP20/ERC20 Functions**
 - ✅ **Token Transfer**: `transfer()`, `transferFrom()`
 - ✅ **Permission Management**: `approve()`, `allowance()`
 - ✅ **Balance Inquiry**: `balanceOf()`, `totalSupply()`
@@ -20,9 +20,9 @@ XPassToken is a multi-functional token that can be used in the Kaia ecosystem, b
 - 🎯 **Owner Management**: `Ownable` - Administrator function control
 
 ### **Multi-Signature Support**
-- 🔐 **Multi-Sig Implementation**: Instead of implementing multi-sig code directly in the KIP7 contract, we utilize the [KAIA Safe](https://safe.kaia.io/) service to create multi-sig wallets and perform multi-signature operations using those wallets.
+- 🔐 **Multi-Sig Implementation**: Instead of implementing multi-sig code directly in the token contract, we utilize the [BNB Safe](https://multisig.bnbchain.org/) service to create multi-sig wallets and perform multi-signature operations using those wallets.
 - 🔑 **Signature Requirements**: The multi-sig wallet is configured to require at least 2 out of 3 signer addresses to approve transactions, ensuring secure and decentralized decision-making.
-- 🏗️ **Mainnet Deployment Strategy**: On mainnet, we will deploy directly to a multi-signature address created through KAIA Safe from the initial deployment, ensuring that the multi-sig wallet address becomes the owner from the deployment moment onwards.
+- 🏗️ **Mainnet Deployment Strategy**: On mainnet, we will deploy directly to a multi-signature address created through BNB Safe from the initial deployment, ensuring that the multi-sig wallet address becomes the owner from the deployment moment onwards.
 - 🚀 **Constructor Parameter**: The contract constructor accepts an `initialOwner` parameter to set the initial owner address during deployment.
 
 ## 🏗️ Technology Stack
@@ -30,7 +30,7 @@ XPassToken is a multi-functional token that can be used in the Kaia ecosystem, b
 - **Solidity**: ^0.8.30
 - **OpenZeppelin**: Latest version of verified contract library
 - **Hardhat**: Development, testing, and deployment framework
-- **Kaia Network**: Blockchain network
+- **Binance Smart Chain (BSC)**: Blockchain network
 
 ## 📦 Installation and Setup
 
@@ -52,17 +52,24 @@ Then edit the `.env` file and set the following required variables:
 - `PRIVATE_KEY`: Your private key for deployment 
 
 **Network Configuration:**
-- `KAIA_TESTNET_RPC_URL`: Kaia testnet RPC endpoint
-- `KAIA_MAINNET_RPC_URL`: Kaia mainnet RPC endpoint
+- `BSC_TESTNET_RPC_URL`: BSC testnet RPC endpoint
+- `BSC_MAINNET_RPC_URL`: BSC mainnet RPC endpoint
+- `BSCSCAN_API_KEY`: BSCScan API key for contract verification
 
 **Example .env file structure:**
 ```env
 # Deployer Account
 PRIVATE_KEY=your_private_key_here_without_0x
 
-# Kaia Network RPC URLs
-KAIA_TESTNET_RPC_URL=https://public-en-kairos.node.kaia.io
-KAIA_MAINNET_RPC_URL=https://public-en.node.kaia.io
+# Multi-Sig Address
+MULTISIG_ADDRESS=0xYourMultiSigAddress
+
+# BSC Network RPC URLs
+BSC_TESTNET_RPC_URL=https://data-seed-prebsc-1-s1.binance.org:8545
+BSC_MAINNET_RPC_URL=https://bsc-dataseed1.binance.org
+
+# BSCScan API Key
+BSCSCAN_API_KEY=your_bscscan_api_key
 ```
 
 ### **3. Compile Contracts**
@@ -98,7 +105,7 @@ npm run node
 npm run deploy:localhost
 ```
 
-### **Kaia Testnet**
+### **BSC Testnet**
 ```bash
 # Deploy only
 npm run deploy:testnet
@@ -107,7 +114,7 @@ npm run deploy:testnet
 npm run deploy-verify:testnet
 ```
 
-### **Kaia Mainnet**
+### **BSC Mainnet**
 ```bash
 # Deploy only
 npm run deploy:mainnet
@@ -132,7 +139,7 @@ TIMELOCK_DELAY=60  # seconds (ignored on mainnet)
 - **Symbol**: XPASS
 - **Decimals**: 18
 - **Initial Supply**: 1,000,000,000 XPASS
-- **Network**: Kaia (Chain ID: 1001 testnet, 8217 mainnet)
+- **Network**: Binance Smart Chain (Chain ID: 97 testnet, 56 mainnet)
 
 ### **Deployed Addresses**
 - **Testnet**: TBD (Deploy when ready)
@@ -143,7 +150,7 @@ TIMELOCK_DELAY=60  # seconds (ignored on mainnet)
 
 A total of **1,000,000,000 XPASS** tokens are minted at deployment under a **single, non-upgradeable contract** and secured as follows:
 
-- **[Multi-Signature Safe Wallet](https://safe.kaia.io/)**: Operated with external professional co-signers, requiring multiple approvals before any transaction can be executed.  
+- **[Multi-Signature Safe Wallet](https://multisig.bnbchain.org/)**: Operated with external professional co-signers, requiring multiple approvals before any transaction can be executed.  
 - **[External Custody Provider](https://custody.upbit.com/introduction)**: Managed under institutional-grade custody and fully compliant with security standards.  
 
 By adopting a single-deployment structure, the contract itself remains immutable.  
@@ -155,7 +162,7 @@ Variable parameters such as transaction fees or reward ratios are managed throug
 
 ### Distribution Policy
 - Allocation ratios (team, marketing, community, etc.) are transparently disclosed.  
-- Vesting wallets are **purpose-labeled on KaiaScan** (e.g., “Team”, “Marketing”, “Community”), and wallet addresses are publicly published.  
+- Vesting wallets are **purpose-labeled on BSCScan** (e.g., "Team", "Marketing", "Community"), and wallet addresses are publicly published.  
 
 ### Governance
 - The token does not grant governance rights over project operations.  
@@ -218,32 +225,33 @@ function _update(address from, address to, uint256 amount)
 ```javascript
 networks: {
   testnet: {
-    url: "https://public-en-kairos.node.kaia.io",
-    chainId: 1001,
+    url: "https://data-seed-prebsc-1-s1.binance.org:8545",
+    chainId: 97,
     accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
   },
   mainnet: {
-    url: "https://public-en.node.kaia.io",
-    chainId: 8217,
+    url: "https://bsc-dataseed1.binance.org",
+    chainId: 56,
     accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
   }
 }
 ```
 
 ### **RPC Endpoints**
-- **Testnet**: `https://public-en-kairos.node.kaia.io`
-- **Mainnet**: `https://public-en.node.kaia.io`
+- **Testnet**: `https://data-seed-prebsc-1-s1.binance.org:8545`
+- **Mainnet**: `https://bsc-dataseed1.binance.org`
 
 
 ## 📁 Project Structure
 
 ```
-xpass-kip7/
+xpass-token/
 ├── contracts/
 │   ├── XPassToken.sol          # Main token contract
 │   └── TimelockController.sol  # Governance contract
 ├── scripts/
-│   └── deploy.js               # Deployment script
+│   ├── deploy.js               # Deployment script
+│   └── deploy-verify.js        # Deployment and verification script
 ├── test/
 │   └── XPassToken.test.js      # Test file
 ├── hardhat.config.js           # Hardhat configuration
@@ -353,4 +361,5 @@ This project is distributed under the MIT License. See the `LICENSE` file for de
 
 - [OpenZeppelin](https://openzeppelin.com/) - Verified smart contract library
 - [Hardhat](https://hardhat.org/) - Development framework
-- [Kaia Network](https://kaia.network/) - Blockchain network
+- [Binance Smart Chain](https://www.bnbchain.org/) - Blockchain network
+- [BNB Safe](https://multisig.bnbchain.org/) - Multi-signature wallet service

@@ -106,7 +106,7 @@ contract XPassTimelockController is TimelockController {
     
     /**
      * @dev Creates a proposal to call pause function
-     * @param xpassToken Token contract address (XPassToken or XPassTokenBSC)
+     * @param xpassToken Token contract address (XPassToken)
      * @return proposalId Generated proposal ID
      */
     function proposePause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
@@ -118,7 +118,7 @@ contract XPassTimelockController is TimelockController {
     
     /**
      * @dev Creates a proposal to call unpause function
-     * @param xpassToken Token contract address (XPassToken or XPassTokenBSC)
+     * @param xpassToken Token contract address (XPassToken)
      * @return proposalId Generated proposal ID
      */
     function proposeUnpause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
@@ -127,111 +127,7 @@ contract XPassTimelockController is TimelockController {
         proposalId = _hashOperationMemory(xpassToken, 0, data, bytes32(0), salt);
         _scheduleMemory(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
     }
-    
-    /**
-     * @dev Creates a proposal to grant minter role to an address in XPassTokenBSC
-     * @param xpassTokenBSC XPassTokenBSC contract address
-     * @param account Address to grant minter role to
-     * @return proposalId Generated proposal ID
-     */
-    function proposeGrantMinterRole(address xpassTokenBSC, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
-        bytes memory data = abi.encodeWithSignature("grantMinterRole(address)", account);
-        bytes32 salt = _nextSalt(bytes4(keccak256("GRANT_MINTER")));
-        proposalId = _hashOperationMemory(xpassTokenBSC, 0, data, bytes32(0), salt);
-        _scheduleMemory(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
-    }
-    
-    /**
-     * @dev Creates a proposal to revoke minter role from an address in XPassTokenBSC
-     * @param xpassTokenBSC XPassTokenBSC contract address
-     * @param account Address to revoke minter role from
-     * @return proposalId Generated proposal ID
-     */
-    function proposeRevokeMinterRole(address xpassTokenBSC, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
-        bytes memory data = abi.encodeWithSignature("revokeMinterRole(address)", account);
-        bytes32 salt = _nextSalt(bytes4(keccak256("REVOKE_MINTER")));
-        proposalId = _hashOperationMemory(xpassTokenBSC, 0, data, bytes32(0), salt);
-        _scheduleMemory(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
-    }
-    
-    /**
-     * @dev Creates a proposal to grant unlocker role to an address in XPassKaiaBridge
-     * @param kaiaBridge XPassKaiaBridge contract address
-     * @param account Address to grant unlocker role to
-     * @return proposalId Generated proposal ID
-     */
-    function proposeGrantUnlockerRole(address kaiaBridge, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
-        bytes memory data = abi.encodeWithSignature("grantUnlockerRole(address)", account);
-        bytes32 salt = _nextSalt(bytes4(keccak256("GRANT_UNLOCKER")));
-        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
-        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
-    }
-    
-    /**
-     * @dev Creates a proposal to revoke unlocker role from an address in XPassKaiaBridge
-     * @param kaiaBridge XPassKaiaBridge contract address
-     * @param account Address to revoke unlocker role from
-     * @return proposalId Generated proposal ID
-     */
-    function proposeRevokeUnlockerRole(address kaiaBridge, address account) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
-        bytes memory data = abi.encodeWithSignature("revokeUnlockerRole(address)", account);
-        bytes32 salt = _nextSalt(bytes4(keccak256("REVOKE_UNLOCKER")));
-        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
-        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
-    }
-    
-    /**
-     * @dev Creates a proposal to update BSC token address in XPassKaiaBridge
-     * @param kaiaBridge XPassKaiaBridge contract address
-     * @param newBscTokenAddress New BSC token contract address
-     * @return proposalId Generated proposal ID
-     */
-    function proposeUpdateBscTokenAddress(address kaiaBridge, address newBscTokenAddress) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
-        bytes memory data = abi.encodeWithSignature("updateBscTokenAddress(address)", newBscTokenAddress);
-        bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_BSC_TOKEN")));
-        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
-        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
-    }
-    
-    /**
-     * @dev Creates a proposal to update BSC chain ID in XPassKaiaBridge
-     * @param kaiaBridge XPassKaiaBridge contract address
-     * @param newBscChainId New BSC chain ID
-     * @return proposalId Generated proposal ID
-     */
-    function proposeUpdateBscChainId(address kaiaBridge, uint256 newBscChainId) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
-        bytes memory data = abi.encodeWithSignature("updateBscChainId(uint256)", newBscChainId);
-        bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_BSC_CHAIN")));
-        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
-        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
-    }
-    
-    /**
-     * @dev Creates a proposal to update minimum lock/unlock amount in XPassKaiaBridge
-     * @param kaiaBridge XPassKaiaBridge contract address
-     * @param newMinLockUnlockAmount New minimum lock and unlock amount
-     * @return proposalId Generated proposal ID
-     */
-    function proposeUpdateMinLockUnlockAmount(address kaiaBridge, uint256 newMinLockUnlockAmount) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
-        bytes memory data = abi.encodeWithSignature("updateMinLockUnlockAmount(uint256)", newMinLockUnlockAmount);
-        bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_MIN_LOCK")));
-        proposalId = _hashOperationMemory(kaiaBridge, 0, data, bytes32(0), salt);
-        _scheduleMemory(kaiaBridge, 0, data, bytes32(0), salt, getMinDelay());
-    }
-    
-    /**
-     * @dev Creates a proposal to update minimum mint/burn amount in XPassTokenBSC
-     * @param xpassTokenBSC XPassTokenBSC contract address
-     * @param newMinMintBurnAmount New minimum mint and burn amount
-     * @return proposalId Generated proposal ID
-     */
-    function proposeUpdateMinMintBurnAmount(address xpassTokenBSC, uint256 newMinMintBurnAmount) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
-        bytes memory data = abi.encodeWithSignature("updateMinMintBurnAmount(uint256)", newMinMintBurnAmount);
-        bytes32 salt = _nextSalt(bytes4(keccak256("UPDATE_MIN_MINT")));
-        proposalId = _hashOperationMemory(xpassTokenBSC, 0, data, bytes32(0), salt);
-        _scheduleMemory(xpassTokenBSC, 0, data, bytes32(0), salt, getMinDelay());
-    }
-    
+
     /**
      * @dev Returns the current delay time
      * @return Currently set minimum delay time (in seconds)
