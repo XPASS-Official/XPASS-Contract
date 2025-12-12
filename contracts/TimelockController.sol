@@ -27,9 +27,13 @@ contract XPassTimelockController is TimelockController {
         address admin
     ) TimelockController(minDelay, _createArray(admin), _createArray(admin), admin) {
         // Inherit TimelockController's default configuration
-        // Add XPassToken-specific settings here if needed
         // Note: Roles are already granted by the parent TimelockController constructor
         // All roles (proposer, executor, admin) are assigned to the admin address
+        
+        // Grant PROPOSER_ROLE to this contract to enable this.schedule() calls
+        // This allows the propose* functions to use this.schedule() without external role grants
+        bytes32 proposerRole = PROPOSER_ROLE;
+        _grantRole(proposerRole, address(this));
     }
     
     /**
@@ -52,59 +56,6 @@ contract XPassTimelockController is TimelockController {
     // --------------------------------------------------------------------
     
     /**
-     * @dev Internal helper to hash operation with bytes memory
-     * This allows internal calls without type conversion issues
-     */
-    function _hashOperationMemory(
-        address target,
-        uint256 value,
-        bytes memory data,
-        bytes32 predecessor,
-        bytes32 salt
-    ) internal pure returns (bytes32) {
-        return keccak256(abi.encode(target, value, data, predecessor, salt));
-    }
-    
-    /**
-     * @dev Internal helper to schedule with bytes memory
-     * This allows internal calls without requiring the contract itself to have PROPOSER_ROLE
-     */
-    function _scheduleMemory(
-        address target,
-        uint256 value,
-        bytes memory data,
-        bytes32 predecessor,
-        bytes32 salt,
-        uint256 delay
-    ) internal {
-        bytes32 id = _hashOperationMemory(target, value, data, predecessor, salt);
-        
-        // Replicate _schedule() logic since it's private in parent
-        if (isOperation(id)) {
-            revert TimelockUnexpectedOperationState(id, _encodeStateBitmap(OperationState.Unset));
-        }
-        uint256 minDelay = getMinDelay();
-        if (delay < minDelay) {
-            revert TimelockInsufficientDelay(delay, minDelay);
-        }
-        
-        // Set _timestamps[id] = block.timestamp + delay using assembly
-        // _timestamps is the first state variable (slot 0) in parent contract
-        assembly {
-            mstore(0x00, id)
-            mstore(0x20, 0) // slot 0 for _timestamps mapping
-            let slot := keccak256(0x00, 0x40)
-            let ts := add(timestamp(), delay)
-            sstore(slot, ts)
-        }
-        
-        emit CallScheduled(id, 0, target, value, data, predecessor, delay);
-        if (salt != bytes32(0)) {
-            emit CallSalt(id, salt);
-        }
-    }
-    
-    /**
      * @dev Creates a proposal to call pause function
      * @param xpassToken Token contract address (XPassToken)
      * @return proposalId Generated proposal ID
@@ -112,8 +63,8 @@ contract XPassTimelockController is TimelockController {
     function proposePause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("pause()");
         bytes32 salt = _nextSalt(bytes4(keccak256("PAUSE")));
-        proposalId = _hashOperationMemory(xpassToken, 0, data, bytes32(0), salt);
-        _scheduleMemory(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), salt);
+        this.schedule(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
     }
     
     /**
@@ -124,8 +75,8 @@ contract XPassTimelockController is TimelockController {
     function proposeUnpause(address xpassToken) external onlyRole(PROPOSER_ROLE) returns (bytes32 proposalId) {
         bytes memory data = abi.encodeWithSignature("unpause()");
         bytes32 salt = _nextSalt(bytes4(keccak256("UNPAUSE")));
-        proposalId = _hashOperationMemory(xpassToken, 0, data, bytes32(0), salt);
-        _scheduleMemory(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
+        proposalId = this.hashOperation(xpassToken, 0, data, bytes32(0), salt);
+        this.schedule(xpassToken, 0, data, bytes32(0), salt, getMinDelay());
     }
 
     /**
